@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理端登录 · OfferOS</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/auth-pages.css">
+</head>
+<body class="admin">
+  <div class="auth-card">
+    <div class="brand">OfferOS Admin</div>
+    <p class="sub">管理员登录</p>
+    <form id="form">
+      <label>用户名</label>
+      <input id="username" autocomplete="username" required minlength="2" value="admin">
+      <label>密码</label>
+      <input id="password" type="password" autocomplete="current-password" required minlength="6">
+      <button type="submit">登录管理端</button>
+    </form>
+    <p class="msg" id="msg"></p>
+    <p class="links">
+      <a href="/admin/register" id="regLink">首次注册管理员</a> ·
+      <a href="/login">用户登录</a>
+    </p>
+    <p class="hint">使用 .env 中的管理员账号，或已创建的管理员账号登录。若仍为环境默认口令，登录后须立即改密。</p>
+  </div>
+<script src="/static/auth.js"></script>
+<script>
+(async () => {
+  const boot = await fetch("/api/auth/admin-bootstrap").then((r) => r.json());
+  if (!boot.can_register_admin) document.getElementById("regLink").style.display = "none";
+})();
+const params = new URLSearchParams(location.search);
+if (params.get("error")) document.getElementById("msg").textContent = params.get("error");
+
+document.getElementById("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("msg");
+  msg.textContent = "登录中…";
+  try {
+    const data = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("username").value.trim(),
+        password: document.getElementById("password").value,
+      }),
+    }).then(async (r) => {
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "登录失败");
+      return d;
+    });
+    if (data.user.role !== "admin") throw new Error("该账号不是管理员");
+    setAuth(data.token, data.user);
+    location.href = "/admin";
+  } catch (err) {
+    msg.textContent = err.message;
+  }
+};
+</script>
+</body>
+</html>

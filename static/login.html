@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · OfferOS</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/auth-pages.css">
+</head>
+<body>
+  <div class="auth-card">
+    <div class="brand">OfferOS</div>
+    <p class="sub">用户登录</p>
+    <form id="form">
+      <label>用户名</label>
+      <input id="username" autocomplete="username" required minlength="2">
+      <label>密码</label>
+      <input id="password" type="password" autocomplete="current-password" required minlength="6">
+      <button type="submit">登录</button>
+    </form>
+    <p class="msg" id="msg"></p>
+    <p class="links">还没有账号？<a href="/register">注册</a> · <a href="/admin/login">管理端登录</a></p>
+  </div>
+<script src="/static/auth.js"></script>
+<script>
+if (getToken()) location.href = "/";
+const params = new URLSearchParams(location.search);
+if (params.get("error")) document.getElementById("msg").textContent = params.get("error");
+
+document.getElementById("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("msg");
+  msg.textContent = "登录中…";
+  try {
+    const data = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("username").value.trim(),
+        password: document.getElementById("password").value,
+      }),
+    }).then(async (r) => {
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "登录失败");
+      return d;
+    });
+    if (data.user.role === "admin") {
+      // admins can use product too
+    }
+    setAuth(data.token, data.user);
+    location.href = "/";
+  } catch (err) {
+    msg.textContent = err.message;
+  }
+};
+</script>
+</body>
+</html>

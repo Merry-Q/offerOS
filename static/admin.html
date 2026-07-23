@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OfferOS 管理端</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #13202b; --ink-2: #3a4a57; --ink-3: #6b7c8a;
+  --paper: #f3f6f8; --line: #d7e0e7; --teal: #0f766e; --teal-soft: #d8f3ef;
+  --shadow: 0 12px 40px rgba(19,32,43,.08); --sidebar: #0f1a24;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Manrope, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--paper); color: var(--ink); line-height: 1.5;
+  min-height: 100vh; display: flex;
+}
+h1, h2 { font-family: Fraunces, Georgia, serif; }
+
+.sidebar {
+  width: 220px; flex-shrink: 0; background: var(--sidebar); color: #e8eef2;
+  padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+  min-height: 100vh; position: sticky; top: 0;
+}
+.sidebar .brand {
+  font-family: Fraunces, Georgia, serif; font-size: 20px; font-weight: 700;
+  padding: 4px 12px 16px; border-bottom: 1px solid rgba(255,255,255,.08); margin-bottom: 10px;
+}
+.sidebar .brand span { display: block; font-family: Manrope, sans-serif; font-size: 11px; color: #8aa0b2; font-weight: 500; margin-top: 4px; }
+.nav-btn {
+  text-align: left; border: none; background: transparent; color: #b7c6d3;
+  padding: 10px 12px; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.nav-btn:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nav-btn.active { background: var(--teal); color: #fff; }
+.sidebar .foot { margin-top: auto; padding: 12px; font-size: 12px; }
+.sidebar .foot a { color: #9fdad3; text-decoration: none; font-weight: 700; }
+
+.main { flex: 1; padding: 24px; min-width: 0; }
+.top {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+}
+.top .muted { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+.btn {
+  border: none; border-radius: 999px; padding: 8px 14px; font-weight: 700;
+  cursor: pointer; background: var(--ink); color: #fff;
+}
+
+.panel-view { display: none; }
+.panel-view.active { display: block; }
+
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } .sidebar { width: 180px; } }
+@media (max-width: 720px) {
+  body { flex-direction: column; }
+  .sidebar { width: 100%; min-height: auto; position: relative; flex-direction: row; flex-wrap: wrap; }
+  .sidebar .foot { width: 100%; margin-top: 8px; }
+}
+
+.card {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; box-shadow: var(--shadow);
+}
+.card .label { font-size: 12px; color: var(--ink-3); font-weight: 700; }
+.card .value { font-family: Fraunces, serif; font-size: 28px; margin-top: 6px; }
+.panel {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+}
+.panel h2 { font-size: 18px; margin-bottom: 6px; }
+.panel .lead { font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
+
+.funnel { display: grid; gap: 10px; }
+.funnel-row { display: grid; grid-template-columns: 120px 1fr 48px; gap: 8px; align-items: center; font-size: 13px; }
+.bar { height: 10px; background: #e8eef2; border-radius: 999px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--teal); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ink-3); font-size: 11px; }
+.event-name { font-weight: 700; }
+.event-code { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--ink-3); }
+.event-desc { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.empty { text-align: center; padding: 32px; color: var(--ink-3); }
+code { font-size: 11px; word-break: break-all; }
+</style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">OfferOS<span>管理端 · 本机</span></div>
+    <button type="button" class="nav-btn active" data-view="overview" onclick="showView('overview')">总览</button>
+    <button type="button" class="nav-btn" data-view="funnel" onclick="showView('funnel')">漏斗</button>
+    <button type="button" class="nav-btn" data-view="entities" onclick="showView('entities')">实体量</button>
+    <button type="button" class="nav-btn" data-view="events" onclick="showView('events')">事件分布</button>
+    <button type="button" class="nav-btn" data-view="stream" onclick="showView('stream')">事件流</button>
+    <div class="foot">
+      <a href="/">← 返回产品</a>
+      <div style="margin-top:8px;color:#8aa0b2;">需管理员登录</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="top">
+      <div>
+        <h1 id="pageTitle">总览</h1>
+        <p class="muted" id="pageLead">关键指标一览</p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span class="muted" id="adminUser"></span>
+        <button class="btn" type="button" onclick="openPasswordModal()">改密</button>
+        <button class="btn" type="button" onclick="load()">刷新数据</button>
+        <button class="btn" type="button" style="background:#3a4a57" onclick="logout(true)">退出</button>
+      </div>
+    </div>
+
+    <section class="panel-view active" id="view-overview">
+      <div class="grid" id="kpiOverview"></div>
+      <div class="panel">
+        <h2>本页说明</h2>
+        <p class="lead">汇总访问、建库、匹配与模型使用情况。详细拆解请切到左侧其他栏目。</p>
+      </div>
+    </section>
+
+    <section class="panel-view" id="view-funnel">
+      <div class="panel">
+        <h2>转化漏斗</h2>
+        <p class="lead">打开 → 建库完成 → 发起匹配 → 生成报告</p>
+        <div class="funnel" id="funnel"></div>
+      </div>
+      <div class="grid" id="kpiFunnel"></div>
+    </section>
+
+    <section class="panel-view" id="view-entities">
+      <div class="panel">
+        <h2>业务实体量</h2>
+        <p class="lead">来自业务库（非仅埋点），反映当前沉淀的数据规模。</p>
+      </div>
+      <div class="grid" id="kpiEntities"></div>
+    </section>
+
+    <section class="panel-view" id="view-events">
+      <div class="panel">
+        <h2>事件分布</h2>
+        <p class="lead">各埋点累计触发次数，含中文说明。</p>
+        <table>
+          <thead><tr><th>事件</th><th>说明</th><th>次数</th></tr></thead>
+          <tbody id="byEvent"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel-view" id="view-stream">
+      <div class="panel">
+        <h2>事件流</h2>
+        <p class="lead">最近 100 条埋点（新→旧）。</p>
+        <table>
+          <thead><tr><th>时间</th><th>事件</th><th>属性</th></tr></thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+<script src="/static/auth.js"></script>
+<script>
+const EVENT_META = {
+  auth_register: { label: "用户注册", desc: "新用户完成注册" },
+  auth_login: { label: "用户登录", desc: "用户成功登录" },
+  auth_logout: { label: "用户登出", desc: "用户退出登录" },
+  auth_change_password: { label: "修改密码", desc: "用户或管理员更新登录密码" },
+  app_open: { label: "打开产品", desc: "用户打开首页 / 进入产品" },
+  onboard_start: { label: "开始建库", desc: "进入首次建库引导" },
+  onboard_complete: { label: "完成建库", desc: "完成首份简历解析" },
+  resume_upload: { label: "上传简历", desc: "向职业库上传简历文件" },
+  resume_parse_success: { label: "简历解析成功", desc: "Resume Analyst 成功生成能力画像" },
+  resume_parse_fail: { label: "简历解析失败", desc: "简历抽文本或 Agent 解析失败" },
+  pref_create: { label: "新建偏好", desc: "（历史）在偏好库中新增一条求职偏好" },
+  pref_update: { label: "编辑偏好", desc: "（历史）修改已有求职偏好" },
+  pref_delete: { label: "删除偏好", desc: "（历史）删除一条求职偏好" },
+  match_start: { label: "发起匹配", desc: "开始一次岗位匹配（含重新匹配）" },
+  jd_analyze_done: { label: "JD 解析完成", desc: "JD Analyst 产出岗位档案" },
+  judge_done: { label: "综合判分完成", desc: "Match Judge 给出分数与冲稳保" },
+  report_generated: { label: "生成报告", desc: "六模块报告写入匹配库" },
+  rematch: { label: "重新匹配", desc: "对已有岗位追加新版本结果" },
+  llm_mode: { label: "模型调用情况", desc: "记录本次是否实际调用了大模型" },
+  job_delete: { label: "删除岗位", desc: "从匹配库删除岗位及全部版本" },
+  settings_key_saved: { label: "保存密钥", desc: "（已废弃）密钥现仅配置于后端 .env" },
+};
+
+const VIEW_META = {
+  overview: { title: "总览", lead: "关键指标一览" },
+  funnel: { title: "漏斗", lead: "核心转化路径" },
+  entities: { title: "实体量", lead: "简历 / 岗位 / 匹配版本" },
+  events: { title: "事件分布", lead: "埋点累计次数与中文说明" },
+  stream: { title: "事件流", lead: "近期行为明细" },
+};
+
+function showView(name) {
+  document.querySelectorAll(".panel-view").forEach((el) => el.classList.remove("active"));
+  document.getElementById("view-" + name).classList.add("active");
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.view === name);
+  });
+  const meta = VIEW_META[name] || { title: name, lead: "" };
+  document.getElementById("pageTitle").textContent = meta.title;
+  document.getElementById("pageLead").textContent = meta.lead;
+  location.hash = name;
+}
+
+function eventCell(event) {
+  const meta = EVENT_META[event] || { label: event, desc: "未登记事件" };
+  return `<div class="event-name">${meta.label}</div><div class="event-code">${event}</div>`;
+}
+function eventDesc(event) {
+  return (EVENT_META[event] || { desc: "未登记事件，请核对埋点定义" }).desc;
+}
+
+function cards(el, items) {
+  el.innerHTML = items.map(([label, value]) => `
+    <div class="card"><div class="label">${label}</div><div class="value">${value ?? 0}</div></div>
+  `).join("");
+}
+
+async function load() {
+  const res = await fetch("/api/analytics/summary", { headers: authHeaders() });
+  if (res.status === 401 || res.status === 403) {
+    clearAuth();
+    location.href = "/admin/login";
+    return;
+  }
+  if (!res.ok) {
+    alert("加载失败，请确认后端已启动");
+    return;
+  }
+  const data = await res.json();
+  const t = data.totals || {};
+  const f = data.funnel || {};
+  const llm = data.llm || {};
+
+  cards(document.getElementById("kpiOverview"), [
+    ["事件总数", t.events],
+    ["用户数", t.users],
+    ["打开次数", f.app_open],
+    ["建库完成", f.onboard_complete],
+    ["发起匹配", f.match_start],
+    ["生成报告", f.report_generated],
+    ["匹配版本", t.match_runs],
+    ["LLM 使用率", ((llm.used_rate || 0) * 100).toFixed(0) + "%"],
+  ]);
+
+  cards(document.getElementById("kpiFunnel"), [
+    ["打开", f.app_open],
+    ["建库完成", f.onboard_complete],
+    ["发起匹配", f.match_start],
+    ["生成报告", f.report_generated],
+  ]);
+
+  const max = Math.max(f.app_open || 1, f.onboard_complete || 0, f.match_start || 0, f.report_generated || 0, 1);
+  const steps = [
+    ["打开", f.app_open],
+    ["建库完成", f.onboard_complete],
+    ["发起匹配", f.match_start],
+    ["生成报告", f.report_generated],
+  ];
+  document.getElementById("funnel").innerHTML = steps.map(([name, v]) => `
+    <div class="funnel-row">
+      <span>${name}</span>
+      <div class="bar"><i style="width:${Math.round((v || 0) / max * 100)}%"></i></div>
+      <strong>${v || 0}</strong>
+    </div>`).join("");
+
+  cards(document.getElementById("kpiEntities"), [
+    ["简历总数", t.resumes],
+    ["已解析简历", t.parsed_resumes],
+    ["岗位数", t.jobs],
+    ["匹配版本", t.match_runs],
+    ["埋点事件", t.events],
+  ]);
+
+  document.getElementById("byEvent").innerHTML = (data.by_event || []).map((r) => `
+    <tr>
+      <td>${eventCell(r.event)}</td>
+      <td class="event-desc">${eventDesc(r.event)}</td>
+      <td>${r.count}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="3" class="empty">暂无事件</td></tr>`;
+
+  document.getElementById("recent").innerHTML = (data.recent || []).map((r) => `
+    <tr>
+      <td>${r.created_at}</td>
+      <td>${eventCell(r.event)}<div class="event-desc">${eventDesc(r.event)}</div></td>
+      <td><code>${JSON.stringify(r.props || {})}</code></td>
+    </tr>
+  `).join("") || `<tr><td colspan="3" class="empty">暂无事件</td></tr>`;
+}
+
+const initial = (location.hash || "#overview").slice(1);
+showView(VIEW_META[initial] ? initial : "overview");
+
+(async () => {
+  const user = await requireLogin({ admin: true });
+  if (!user) return;
+  const el = document.getElementById("adminUser");
+  if (el) el.textContent = user.username;
+  if (user.must_change_password) showPasswordWarningBanner(true);
+  load();
+})();
+</script>
+</body>
+</html>
