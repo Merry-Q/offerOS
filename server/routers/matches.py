@@ -4,17 +4,25 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from server.agents.action_agent import build_action_report
-from server.agents.jd_agent import analyze_jd
+from server.agents.jd_agent import analyze_jd, extract_jd_from_image
 from server.agents.judge_agent import judge_match
 from server.auth import get_current_user
+from server.config import settings
 from server.db import dumps, get_db, loads, utc_now
 from server.routers.analytics import track_event
 
 router = APIRouter(tags=["matches"])
+
+ALLOWED_JD_IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+}
 
 
 class AnalyzeJdBody(BaseModel):
@@ -92,6 +100,59 @@ def delete_job(job_id: str, user: dict = Depends(get_current_user)):
             raise HTTPException(404, "岗位不存在")
     track_event("job_delete", {"job_id": job_id}, user_id=user["id"])
     return {"ok": True}
+
+
+@router.post("/match/extract-jd-image")
+async def extract_jd_image_api(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """从 JD 截图提取可编辑文本（GLM 多模态）。"""
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in ALLOWED_JD_IMAGE_TYPES:
+        raise HTTPException(400, "仅支持 PNG / JPG / WebP 截图")
+
+    raw = await file.read()
+    max_bytes = min(settings.max_upload_mb, 5) * 1024 * 1024
+    if len(raw) > max_bytes:
+        raise HTTPException(400, "截图过大，上限 5MB，请重传")
+    if len(raw) < 100:
+        raise HTTPException(400, "截图无效，请重传")
+
+    t0 = time.time()
+    try:
+        result, meta = extract_jd_from_image(raw, mime)
+    except Exception as exc:  # noqa: BLE001
+        track_event(
+            "jd_image_extract_fail",
+            {"error": str(exc)[:200]},
+            user_id=user["id"],
+        )
+        raise HTTPException(400, "识别失败，请重传更清晰的截图") from exc
+
+    ok = bool(result.get("ok")) and len(str(result.get("jd_text") or "").strip()) >= 20
+    track_event(
+        "jd_image_extract_done" if ok else "jd_image_extract_fail",
+        {
+            "success": ok,
+            "duration_ms": int((time.time() - t0) * 1000),
+            "llm_used": meta.get("used", False),
+            "model": meta.get("model"),
+        },
+        user_id=user["id"],
+    )
+    if not ok:
+        raise HTTPException(
+            400,
+            result.get("notes") or "识别失败，请重传更清晰的截图",
+        )
+
+    return {
+        "jd_text": result["jd_text"],
+        "title": result.get("title") or "",
+        "notes": result.get("notes") or "",
+        "llm": meta,
+    }
 
 
 @router.post("/match/analyze-jd")

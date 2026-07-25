@@ -37,6 +37,10 @@ class Settings:
         self.glm_api_key = os.getenv("GLM_API_KEY", "").strip()
         self.glm_base_url = os.getenv("GLM_BASE_URL", "https://api.z.ai/api/paas/v4").rstrip("/")
         self.glm_model = os.getenv("GLM_MODEL", "glm-5.2")
+        # 截图识图用视觉模型；未配置时默认 glm-5v-turbo
+        self.glm_vision_model = (
+            os.getenv("GLM_VISION_MODEL", "").strip() or "glm-5v-turbo"
+        )
         self.llm_mode = os.getenv("LLM_MODE", "auto").lower()
         self.offeros_host = os.getenv("OFFEROS_HOST", "127.0.0.1")
         self.offeros_port = int(os.getenv("OFFEROS_PORT", "8000"))

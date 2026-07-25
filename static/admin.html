@@ -11,6 +11,7 @@
 :root {
   --ink: #13202b; --ink-2: #3a4a57; --ink-3: #6b7c8a;
   --paper: #f3f6f8; --line: #d7e0e7; --teal: #0f766e; --teal-soft: #d8f3ef;
+  --amber: #b45309; --amber-soft: #fff7eb; --rose: #be123c; --rose-soft: #fff1f2;
   --shadow: 0 12px 40px rgba(19,32,43,.08); --sidebar: #0f1a24;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,26 +49,45 @@ h1, h2 { font-family: Fraunces, Georgia, serif; }
 .top .muted { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
 .btn {
   border: none; border-radius: 999px; padding: 8px 14px; font-weight: 700;
-  cursor: pointer; background: var(--ink); color: #fff;
+  cursor: pointer; background: var(--ink); color: #fff; font-size: 13px;
 }
+.btn-ghost {
+  background: #fff; color: var(--ink-2); border: 1px solid var(--line);
+}
+.btn-ghost.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+
+.range-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.range-bar .hint { font-size: 12px; color: var(--ink-3); margin-left: 4px; }
 
 .panel-view { display: none; }
 .panel-view.active { display: block; }
 
 .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-@media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } .sidebar { width: 180px; } }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1100px) {
+  .grid, .grid-3 { grid-template-columns: 1fr 1fr; }
+  .sidebar { width: 180px; }
+}
 @media (max-width: 720px) {
   body { flex-direction: column; }
   .sidebar { width: 100%; min-height: auto; position: relative; flex-direction: row; flex-wrap: wrap; }
   .sidebar .foot { width: 100%; margin-top: 8px; }
+  .grid, .grid-3 { grid-template-columns: 1fr; }
 }
 
 .card {
   background: #fff; border: 1px solid var(--line); border-radius: 12px;
   padding: 16px; box-shadow: var(--shadow);
 }
+.card.hero {
+  grid-column: 1 / -1;
+  background: linear-gradient(160deg, #eef7f6, #fff 55%);
+  display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+}
 .card .label { font-size: 12px; color: var(--ink-3); font-weight: 700; }
 .card .value { font-family: Fraunces, serif; font-size: 28px; margin-top: 6px; }
+.card.hero .value { font-size: 40px; }
+.card .sub { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
 .panel {
   background: #fff; border: 1px solid var(--line); border-radius: 12px;
   padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow);
@@ -75,10 +95,98 @@ h1, h2 { font-family: Fraunces, Georgia, serif; }
 .panel h2 { font-size: 18px; margin-bottom: 6px; }
 .panel .lead { font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
 
-.funnel { display: grid; gap: 10px; }
-.funnel-row { display: grid; grid-template-columns: 120px 1fr 48px; gap: 8px; align-items: center; font-size: 13px; }
+.insight {
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+  background: var(--teal-soft); border: 1px solid #b7e4de; font-size: 14px; color: var(--ink);
+}
+.insight.warn { background: var(--amber-soft); border-color: #f5d0a0; }
+.insight .tag { font-size: 11px; font-weight: 700; color: var(--teal); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.insight.warn .tag { color: var(--amber); }
+
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.pill {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  background: #fff; border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 14px; font-size: 12px; color: var(--ink-2);
+}
+.pill strong { font-family: Fraunces, serif; font-size: 16px; color: var(--ink); }
+.pill.bad { border-color: #fecdd3; background: var(--rose-soft); }
+
+.tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.tab {
+  border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  border-radius: 999px; padding: 8px 14px; font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.tab.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+
+.funnel { display: grid; gap: 12px; }
+.funnel-row {
+  display: grid; grid-template-columns: 110px 1fr 56px 72px; gap: 10px;
+  align-items: center; font-size: 13px;
+}
+@media (max-width: 720px) {
+  .funnel-row { grid-template-columns: 1fr; gap: 4px; }
+}
 .bar { height: 10px; background: #e8eef2; border-radius: 999px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--teal); }
+.rate { color: var(--ink-3); font-size: 12px; text-align: right; }
+.cohort-note { font-size: 12px; color: var(--ink-3); margin-top: 12px; }
+
+.dist-row {
+  display: grid; grid-template-columns: 88px 1fr 48px 56px; gap: 8px;
+  align-items: center; font-size: 13px; margin-bottom: 8px;
+}
+.chart-wrap { overflow-x: auto; overflow-y: visible; padding-top: 28px; }
+.chart-bars {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(28px, 1fr);
+  gap: 6px; align-items: end; height: 160px; min-width: 280px;
+}
+.chart-col { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 4px; }
+.chart-group { display: flex; align-items: flex-end; gap: 2px; width: 100%; flex: 1; }
+.chart-bar {
+  position: relative;
+  flex: 1; border-radius: 3px 3px 0 0; min-height: 0;
+  background: var(--teal); cursor: default;
+}
+.chart-bar.alt { background: #5b8a9a; }
+.chart-bar.llm { background: var(--amber); }
+.chart-bar .tip {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: none;
+}
+.chart-bar .tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+}
+.chart-bar:hover .tip { display: block; }
+.chart-label { font-size: 10px; color: var(--ink-3); writing-mode: horizontal-tb; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--ink-3); margin-top: 10px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.legend .l-match { background: var(--teal); }
+.legend .l-report { background: #5b8a9a; }
+.legend .l-llm { background: var(--amber); }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } .dist-row { grid-template-columns: 72px 1fr 40px 48px; } }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -92,9 +200,11 @@ code { font-size: 11px; word-break: break-all; }
 </head>
 <body>
   <aside class="sidebar">
-    <div class="brand">OfferOS<span>管理端 · 本机</span></div>
+    <div class="brand">OfferOS<span>管理端</span></div>
     <button type="button" class="nav-btn active" data-view="overview" onclick="showView('overview')">总览</button>
-    <button type="button" class="nav-btn" data-view="funnel" onclick="showView('funnel')">漏斗</button>
+    <button type="button" class="nav-btn" data-view="funnel" onclick="showView('funnel')">双漏斗</button>
+    <button type="button" class="nav-btn" data-view="quality" onclick="showView('quality')">匹配质量</button>
+    <button type="button" class="nav-btn" data-view="usage" onclick="showView('usage')">用量成本</button>
     <button type="button" class="nav-btn" data-view="entities" onclick="showView('entities')">实体量</button>
     <button type="button" class="nav-btn" data-view="events" onclick="showView('events')">事件分布</button>
     <button type="button" class="nav-btn" data-view="stream" onclick="showView('stream')">事件流</button>
@@ -108,9 +218,9 @@ code { font-size: 11px; word-break: break-all; }
     <div class="top">
       <div>
         <h1 id="pageTitle">总览</h1>
-        <p class="muted" id="pageLead">关键指标一览</p>
+        <p class="muted" id="pageLead">决策指标 · 按时间窗观察</p>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <span class="muted" id="adminUser"></span>
         <button class="btn" type="button" onclick="openPasswordModal()">改密</button>
         <button class="btn" type="button" onclick="load()">刷新数据</button>
@@ -118,27 +228,94 @@ code { font-size: 11px; word-break: break-all; }
       </div>
     </div>
 
+    <div class="range-bar">
+      <button type="button" class="btn btn-ghost" data-range="1d" onclick="setRange('1d')">今日</button>
+      <button type="button" class="btn btn-ghost active" data-range="7d" onclick="setRange('7d')">近 7 天</button>
+      <button type="button" class="btn btn-ghost" data-range="30d" onclick="setRange('30d')">近 30 天</button>
+      <button type="button" class="btn btn-ghost" data-range="all" onclick="setRange('all')">全部</button>
+      <span class="hint" id="rangeHint"></span>
+    </div>
+
     <section class="panel-view active" id="view-overview">
+      <div id="insightBox" class="insight"><div class="tag">观察</div><div id="insightText">加载中…</div></div>
       <div class="grid" id="kpiOverview"></div>
+      <div class="pills" id="healthPills"></div>
       <div class="panel">
-        <h2>本页说明</h2>
-        <p class="lead">汇总访问、建库、匹配与模型使用情况。详细拆解请切到左侧其他栏目。</p>
+        <h2>口径说明</h2>
+        <p class="lead" style="margin-bottom:0">
+          北极星 = 时间窗内至少出过 1 份报告的去重用户。
+          新客激活完成率只看本窗注册队列；回访匹配率排除本窗新注册，避免和新客建库混算。
+        </p>
       </div>
     </section>
 
     <section class="panel-view" id="view-funnel">
-      <div class="panel">
-        <h2>转化漏斗</h2>
-        <p class="lead">打开 → 建库完成 → 发起匹配 → 生成报告</p>
-        <div class="funnel" id="funnel"></div>
+      <div class="tabs">
+        <button type="button" class="tab active" data-funnel="activation" onclick="setFunnelTab('activation')">新用户激活</button>
+        <button type="button" class="tab" data-funnel="returning" onclick="setFunnelTab('returning')">回访核心环</button>
       </div>
-      <div class="grid" id="kpiFunnel"></div>
+      <div class="panel">
+        <h2 id="funnelTitle">新用户激活</h2>
+        <p class="lead" id="funnelLead"></p>
+        <div class="grid" id="kpiFunnel" style="margin-bottom:16px"></div>
+        <div class="funnel" id="funnel"></div>
+        <p class="cohort-note" id="funnelNote"></p>
+      </div>
+    </section>
+
+    <section class="panel-view" id="view-quality">
+      <div class="grid" id="kpiQuality"></div>
+      <div class="two-col">
+        <div class="panel">
+          <h2>冲稳保分布</h2>
+          <p class="lead">来自匹配库 score/level（时间窗内版本）</p>
+          <div id="levelDist"></div>
+        </div>
+        <div class="panel">
+          <h2>分数分桶</h2>
+          <p class="lead">综合匹配度区间人数</p>
+          <div id="scoreBuckets"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>链路健康</h2>
+        <p class="lead">解析失败、判分是否走模型、匹配耗时</p>
+        <div class="pills" id="qualityHealth"></div>
+      </div>
+    </section>
+
+    <section class="panel-view" id="view-usage">
+      <div class="grid" id="kpiUsage"></div>
+      <div class="panel">
+        <h2>每日趋势</h2>
+        <p class="lead">匹配 / 报告 / LLM 真实调用（柱高按当日最大值归一）</p>
+        <div class="chart-wrap">
+          <div class="chart-bars" id="usageChart"></div>
+        </div>
+        <div class="legend">
+          <span><i class="l-match"></i>匹配</span>
+          <span><i class="l-report"></i>报告</span>
+          <span><i class="l-llm"></i>LLM 调用</span>
+        </div>
+        <p class="cohort-note" id="usageNote"></p>
+      </div>
+      <div class="panel">
+        <h2>获客与回访（按日）</h2>
+        <p class="lead">注册与登录次数，辅助看增长波动</p>
+        <div class="chart-wrap">
+          <div class="chart-bars" id="growthChart"></div>
+        </div>
+        <div class="legend">
+          <span><i class="l-match"></i>注册</span>
+          <span><i class="l-report"></i>登录</span>
+        </div>
+      </div>
     </section>
 
     <section class="panel-view" id="view-entities">
       <div class="panel">
         <h2>业务实体量</h2>
-        <p class="lead">来自业务库（非仅埋点），反映当前沉淀的数据规模。</p>
+        <p class="lead">全库存量（不受时间窗影响），反映当前沉淀规模。</p>
       </div>
       <div class="grid" id="kpiEntities"></div>
     </section>
@@ -146,7 +323,7 @@ code { font-size: 11px; word-break: break-all; }
     <section class="panel-view" id="view-events">
       <div class="panel">
         <h2>事件分布</h2>
-        <p class="lead">各埋点累计触发次数，含中文说明。</p>
+        <p class="lead">当前时间窗内各埋点触发次数（排障用）。</p>
         <table>
           <thead><tr><th>事件</th><th>说明</th><th>次数</th></tr></thead>
           <tbody id="byEvent"></tbody>
@@ -157,7 +334,7 @@ code { font-size: 11px; word-break: break-all; }
     <section class="panel-view" id="view-stream">
       <div class="panel">
         <h2>事件流</h2>
-        <p class="lead">最近 100 条埋点（新→旧）。</p>
+        <p class="lead">当前时间窗内最近 100 条（新→旧）。</p>
         <table>
           <thead><tr><th>时间</th><th>事件</th><th>属性</th></tr></thead>
           <tbody id="recent"></tbody>
@@ -184,6 +361,8 @@ const EVENT_META = {
   pref_delete: { label: "删除偏好", desc: "（历史）删除一条求职偏好" },
   match_start: { label: "发起匹配", desc: "开始一次岗位匹配（含重新匹配）" },
   jd_analyze_done: { label: "JD 解析完成", desc: "JD Analyst 产出岗位档案" },
+  jd_image_extract_done: { label: "JD 截图识别成功", desc: "从截图提取岗位文本" },
+  jd_image_extract_fail: { label: "JD 截图识别失败", desc: "截图识图失败或结果无效" },
   judge_done: { label: "综合判分完成", desc: "Match Judge 给出分数与冲稳保" },
   report_generated: { label: "生成报告", desc: "六模块报告写入匹配库" },
   rematch: { label: "重新匹配", desc: "对已有岗位追加新版本结果" },
@@ -193,12 +372,31 @@ const EVENT_META = {
 };
 
 const VIEW_META = {
-  overview: { title: "总览", lead: "关键指标一览" },
-  funnel: { title: "漏斗", lead: "核心转化路径" },
-  entities: { title: "实体量", lead: "简历 / 岗位 / 匹配版本" },
-  events: { title: "事件分布", lead: "埋点累计次数与中文说明" },
-  stream: { title: "事件流", lead: "近期行为明细" },
+  overview: { title: "总览", lead: "北极星 · 双漏斗摘要 · 健康护栏" },
+  funnel: { title: "双漏斗", lead: "新用户激活 / 回访核心环（分开统计）" },
+  quality: { title: "匹配质量", lead: "冲稳保 · 分数分布 · 解析与耗时" },
+  usage: { title: "用量成本", lead: "按日趋势 · 人均匹配 · LLM 代理成本" },
+  entities: { title: "实体量", lead: "全库存量 · 不受时间窗影响" },
+  events: { title: "事件分布", lead: "时间窗内埋点次数（排障）" },
+  stream: { title: "事件流", lead: "时间窗内近期行为明细" },
 };
+
+const RANGE_LABEL = { "1d": "今日", "7d": "近 7 天", "30d": "近 30 天", all: "全部时间" };
+
+let currentRange = "7d";
+let funnelTab = "activation";
+let lastData = null;
+
+function pct(rate) {
+  if (rate == null) return "—";
+  return `${Math.round(rate * 100)}%`;
+}
+
+function fmtMs(ms) {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 
 function showView(name) {
   document.querySelectorAll(".panel-view").forEach((el) => el.classList.remove("active"));
@@ -212,6 +410,22 @@ function showView(name) {
   location.hash = name;
 }
 
+function setRange(range) {
+  currentRange = range;
+  document.querySelectorAll("[data-range]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === range);
+  });
+  load();
+}
+
+function setFunnelTab(tab) {
+  funnelTab = tab;
+  document.querySelectorAll(".tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.funnel === tab);
+  });
+  if (lastData) renderFunnels(lastData);
+}
+
 function eventCell(event) {
   const meta = EVENT_META[event] || { label: event, desc: "未登记事件" };
   return `<div class="event-name">${meta.label}</div><div class="event-code">${event}</div>`;
@@ -220,14 +434,199 @@ function eventDesc(event) {
   return (EVENT_META[event] || { desc: "未登记事件，请核对埋点定义" }).desc;
 }
 
-function cards(el, items) {
-  el.innerHTML = items.map(([label, value]) => `
+function renderFunnelSteps(steps) {
+  const base = Math.max(...steps.map((s) => s.users), 1);
+  return steps.map((s, i) => {
+    const rateText = i === 0 ? "队列" : `← ${pct(s.from_prev_rate)}`;
+    return `
+      <div class="funnel-row">
+        <span>${s.label}</span>
+        <div class="bar"><i style="width:${Math.round((s.users || 0) / base * 100)}%"></i></div>
+        <strong>${s.users || 0}</strong>
+        <span class="rate">${rateText}</span>
+      </div>`;
+  }).join("");
+}
+
+function renderFunnels(data) {
+  const funnel = funnelTab === "returning" ? data.returning_funnel : data.activation_funnel;
+  if (!funnel) return;
+  document.getElementById("funnelTitle").textContent = funnel.title || "";
+  document.getElementById("funnelLead").textContent =
+    funnelTab === "returning"
+      ? "只看老客回访：打开/登录 → 匹配 → 报告 → 重匹（不含本窗新注册）"
+      : "只看新客：注册 → 建库 → 首次匹配 → 首份报告（同期注册队列）";
+  document.getElementById("funnelNote").textContent = funnel.cohort_note || "";
+
+  const steps = funnel.steps || [];
+  const cards = funnelTab === "returning"
+    ? [
+        ["回访队列", funnel.cohort_size],
+        ["回访匹配率", pct(funnel.return_match_rate)],
+        ["出报告（人）", steps[2]?.users ?? 0],
+        ["重匹（人）", steps[3]?.users ?? 0],
+      ]
+    : [
+        ["注册队列", funnel.cohort_size],
+        ["建库完成率", pct(funnel.onboard_rate)],
+        ["激活完成率", pct(funnel.activation_rate)],
+        ["首份报告（人）", steps[3]?.users ?? 0],
+      ];
+  document.getElementById("kpiFunnel").innerHTML = cards.map(([label, value]) => `
     <div class="card"><div class="label">${label}</div><div class="value">${value ?? 0}</div></div>
+  `).join("");
+  document.getElementById("funnel").innerHTML = renderFunnelSteps(steps);
+}
+
+function renderDist(el, items, labelKey, countKey) {
+  const max = Math.max(...items.map((x) => x[countKey] || 0), 1);
+  el.innerHTML = items.map((x) => `
+    <div class="dist-row">
+      <span>${x[labelKey]}</span>
+      <div class="bar"><i style="width:${Math.round((x[countKey] || 0) / max * 100)}%"></i></div>
+      <strong>${x[countKey] || 0}</strong>
+      <span class="rate">${pct(x.rate)}</span>
+    </div>
+  `).join("") || `<div class="empty">暂无数据</div>`;
+}
+
+function renderQuality(data) {
+  const q = data.quality || {};
+  document.getElementById("kpiQuality").innerHTML = [
+    ["匹配版本数", q.match_runs ?? 0, "时间窗内写入匹配库"],
+    ["平均分", q.avg_score ?? "—", "综合匹配度均值"],
+    ["中位分", q.median_score ?? "—", "综合匹配度中位数"],
+    ["重匹占比", pct(q.rematch_rate), "version>1 的版本占比"],
+  ].map(([label, value, sub]) => `
+    <div class="card">
+      <div class="label">${label}</div>
+      <div class="value">${value}</div>
+      <div class="sub">${sub}</div>
+    </div>
+  `).join("");
+
+  renderDist(document.getElementById("levelDist"), q.level_distribution || [], "level", "count");
+  renderDist(document.getElementById("scoreBuckets"), q.score_buckets || [], "bucket", "count");
+
+  const pills = [
+    ["解析失败", `${q.parse_fail ?? 0} / ${(q.parse_fail || 0) + (q.parse_success || 0)}`, (q.parse_fail_rate || 0) >= 0.15],
+    ["解析失败率", pct(q.parse_fail_rate), (q.parse_fail_rate || 0) >= 0.15],
+    ["判分走 LLM", pct(q.judge_llm_rate), false],
+    ["匹配 P50", fmtMs(q.duration_p50_ms), false],
+    ["匹配 P95", fmtMs(q.duration_p95_ms), (q.duration_p95_ms || 0) >= 60000],
+    ["重匹事件率", pct(q.rematch_event_rate), false],
+  ];
+  document.getElementById("qualityHealth").innerHTML = pills.map(([label, value, bad]) => `
+    <span class="pill${bad ? " bad" : ""}">${label} <strong>${value}</strong></span>
+  `).join("");
+}
+
+function renderBarChart(el, daily, series) {
+  const max = Math.max(
+    1,
+    ...daily.flatMap((d) => series.map((s) => d[s.key] || 0)),
+  );
+  el.innerHTML = daily.map((d) => {
+    const label = d.date.slice(5);
+    const bars = series.map((s) => {
+      const v = d[s.key] || 0;
+      const h = Math.round((v / max) * 100);
+      return `<div class="chart-bar ${s.cls || ""}" style="height:${Math.max(h, v > 0 ? 6 : 0)}%" aria-label="${s.name}: ${v}"><span class="tip">${s.name} ${v}</span></div>`;
+    }).join("");
+    return `<div class="chart-col"><div class="chart-group">${bars}</div><div class="chart-label">${label}</div></div>`;
+  }).join("") || `<div class="empty">暂无趋势</div>`;
+}
+
+function renderUsage(data) {
+  const u = data.usage || {};
+  document.getElementById("kpiUsage").innerHTML = [
+    ["活跃用户", u.active_users ?? 0, "窗内有打开/登录/匹配等行为"],
+    ["人均匹配", u.matches_per_active_user ?? 0, "匹配次数 / 活跃用户"],
+    ["人均报告", u.reports_per_active_user ?? 0, "报告次数 / 活跃用户"],
+    ["LLM 调用", u.llm_used_total ?? 0, `调用率 ${pct(u.llm_used_rate)}`],
+  ].map(([label, value, sub]) => `
+    <div class="card">
+      <div class="label">${label}</div>
+      <div class="value">${value}</div>
+      <div class="sub">${sub}</div>
+    </div>
+  `).join("");
+
+  const daily = u.daily || [];
+  renderBarChart(document.getElementById("usageChart"), daily, [
+    { key: "matches", name: "匹配", cls: "" },
+    { key: "reports", name: "报告", cls: "alt" },
+    { key: "llm_used", name: "LLM", cls: "llm" },
+  ]);
+  renderBarChart(document.getElementById("growthChart"), daily, [
+    { key: "registers", name: "注册", cls: "" },
+    { key: "logins", name: "登录", cls: "alt" },
+  ]);
+  document.getElementById("usageNote").textContent = u.cost_note || "";
+}
+
+function renderOverview(data) {
+  const o = data.overview || {};
+  const h = data.health || {};
+  const insight = data.insight || "";
+  const box = document.getElementById("insightBox");
+  const warn =
+    insight.includes("偏低") ||
+    insight.includes("偏少") ||
+    insight.includes("失败") ||
+    insight.includes("偏慢");
+  box.classList.toggle("warn", warn);
+  document.getElementById("insightText").textContent = insight;
+
+  document.getElementById("kpiOverview").innerHTML = `
+    <div class="card hero">
+      <div>
+        <div class="label">北极星 · 完成报告的活跃用户</div>
+        <div class="value">${o.nsm_report_users ?? 0}</div>
+        <div class="sub">${RANGE_LABEL[data.range] || ""}内至少出过 1 份报告的去重用户</div>
+      </div>
+      <div style="text-align:right">
+        <div class="label">人均报告</div>
+        <div class="value" style="font-size:28px">${o.reports_per_nsm_user ?? 0}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">新客激活完成率</div>
+      <div class="value">${pct(o.new_activation_rate)}</div>
+      <div class="sub">首份报告 / 本窗注册</div>
+    </div>
+    <div class="card">
+      <div class="label">回访匹配率</div>
+      <div class="value">${pct(o.return_match_rate)}</div>
+      <div class="sub">发起匹配 / 回访老客</div>
+    </div>
+    <div class="card">
+      <div class="label">会话出报告率</div>
+      <div class="value">${pct(o.session_report_rate)}</div>
+      <div class="sub">报告次数 / 匹配次数</div>
+    </div>
+    <div class="card">
+      <div class="label">匹配次数</div>
+      <div class="value">${o.matches_in_range ?? 0}</div>
+      <div class="sub">时间窗内 match_start</div>
+    </div>
+  `;
+
+  const pills = [
+    ["解析失败率", pct(h.parse_fail_rate), (h.parse_total || 0) >= 5 && (h.parse_fail_rate || 0) >= 0.15],
+    ["LLM 调用率", pct(h.llm_used_rate), false],
+    ["匹配 P50", fmtMs(h.duration_p50_ms), false],
+    ["匹配 P95", fmtMs(h.duration_p95_ms), (h.duration_p95_ms || 0) >= 60000],
+  ];
+  document.getElementById("healthPills").innerHTML = pills.map(([label, value, bad]) => `
+    <span class="pill${bad ? " bad" : ""}">${label} <strong>${value}</strong></span>
   `).join("");
 }
 
 async function load() {
-  const res = await fetch("/api/analytics/summary", { headers: authHeaders() });
+  const res = await fetch(`/api/analytics/summary?range=${encodeURIComponent(currentRange)}`, {
+    headers: authHeaders(),
+  });
   if (res.status === 401 || res.status === 403) {
     clearAuth();
     location.href = "/admin/login";
@@ -238,49 +637,27 @@ async function load() {
     return;
   }
   const data = await res.json();
+  lastData = data;
+
+  document.getElementById("rangeHint").textContent =
+    data.since ? `统计起点 ${data.since.slice(0, 19).replace("T", " ")} UTC` : "不限时间";
+
+  renderOverview(data);
+  renderFunnels(data);
+  renderQuality(data);
+  renderUsage(data);
+
   const t = data.totals || {};
-  const f = data.funnel || {};
-  const llm = data.llm || {};
-
-  cards(document.getElementById("kpiOverview"), [
-    ["事件总数", t.events],
+  document.getElementById("kpiEntities").innerHTML = [
     ["用户数", t.users],
-    ["打开次数", f.app_open],
-    ["建库完成", f.onboard_complete],
-    ["发起匹配", f.match_start],
-    ["生成报告", f.report_generated],
-    ["匹配版本", t.match_runs],
-    ["LLM 使用率", ((llm.used_rate || 0) * 100).toFixed(0) + "%"],
-  ]);
-
-  cards(document.getElementById("kpiFunnel"), [
-    ["打开", f.app_open],
-    ["建库完成", f.onboard_complete],
-    ["发起匹配", f.match_start],
-    ["生成报告", f.report_generated],
-  ]);
-
-  const max = Math.max(f.app_open || 1, f.onboard_complete || 0, f.match_start || 0, f.report_generated || 0, 1);
-  const steps = [
-    ["打开", f.app_open],
-    ["建库完成", f.onboard_complete],
-    ["发起匹配", f.match_start],
-    ["生成报告", f.report_generated],
-  ];
-  document.getElementById("funnel").innerHTML = steps.map(([name, v]) => `
-    <div class="funnel-row">
-      <span>${name}</span>
-      <div class="bar"><i style="width:${Math.round((v || 0) / max * 100)}%"></i></div>
-      <strong>${v || 0}</strong>
-    </div>`).join("");
-
-  cards(document.getElementById("kpiEntities"), [
     ["简历总数", t.resumes],
     ["已解析简历", t.parsed_resumes],
     ["岗位数", t.jobs],
     ["匹配版本", t.match_runs],
-    ["埋点事件", t.events],
-  ]);
+    ["窗内事件", t.events],
+  ].map(([label, value]) => `
+    <div class="card"><div class="label">${label}</div><div class="value">${value ?? 0}</div></div>
+  `).join("");
 
   document.getElementById("byEvent").innerHTML = (data.by_event || []).map((r) => `
     <tr>
@@ -308,6 +685,9 @@ showView(VIEW_META[initial] ? initial : "overview");
   const el = document.getElementById("adminUser");
   if (el) el.textContent = user.username;
   if (user.must_change_password) showPasswordWarningBanner(true);
+  document.querySelectorAll("[data-range]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === currentRange);
+  });
   load();
 })();
 </script>

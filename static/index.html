@@ -163,10 +163,20 @@ body.has-sidebar #topBrand { display: none; }
   border: 1.5px dashed #9db3c2; border-radius: 12px; padding: 22px; text-align: center;
   background: #f7fafb; cursor: pointer;
 }
-.upload-zone:hover { border-color: var(--teal); background: var(--teal-soft); }
+.upload-zone:hover, .upload-zone.drag { border-color: var(--teal); background: var(--teal-soft); }
 .upload-zone strong { display: block; margin-bottom: 4px; }
 .upload-zone span { font-size: 12px; color: var(--ink-3); }
 .upload-zone input { display: none; }
+.jd-shot-preview {
+  margin-top: 12px; display: none; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+}
+.jd-shot-preview.show { display: flex; }
+.jd-shot-preview img {
+  max-width: 220px; max-height: 160px; border-radius: 10px;
+  border: 1px solid var(--line); object-fit: contain; background: #fff;
+}
+.jd-shot-preview .meta { font-size: 12px; color: var(--ink-3); flex: 1; min-width: 160px; }
+.jd-extract-status { font-size: 13px; color: var(--ink-2); margin-top: 8px; min-height: 1.2em; }
 
 .detail-box {
   margin-top: 10px; padding: 12px; border-radius: 10px; background: #f7fafb; border: 1px solid var(--line);
@@ -188,9 +198,15 @@ body.has-sidebar #topBrand { display: none; }
   display: block; height: 100%; width: 0%;
   background: linear-gradient(90deg, var(--teal), #1e3a5f); border-radius: inherit;
 }
-.agent-card.running .progress > i { animation: bar 1.2s ease infinite alternate; }
+.agent-card.running .progress > i,
+.resume-parse-card.running .progress > i { animation: bar 1.2s ease infinite alternate; }
 @keyframes bar { from { width: 35%; } to { width: 88%; } }
-.agent-card.done .progress > i { width: 100%; background: var(--teal); }
+.agent-card.done .progress > i,
+.resume-parse-card.done .progress > i { width: 100%; background: var(--teal); animation: none; }
+.resume-parse-card.failed .progress > i { width: 40%; background: #be123c; animation: none; }
+.resume-parse-card .parse-stage {
+  font-size: 13px; color: var(--ink-2); margin-top: 2px;
+}
 .bullet { font-size: 13px; color: var(--ink-2); margin: 6px 0; padding-left: 14px; position: relative; }
 .bullet::before {
   content: ""; position: absolute; left: 0; top: 8px;
@@ -383,9 +399,9 @@ body.has-sidebar #topBrand { display: none; }
   <section class="view" id="view-match">
     <nav class="step-rail">
       <div class="step active" data-step="0" onclick="goMatch(0)">
-        <span class="idx">01 贴 JD</span>
+        <span class="idx">01 JD 截图</span>
         <span class="label">选用职业库资产</span>
-        <span class="sub">选简历画像</span>
+        <span class="sub">截图识别 · 可改文字</span>
       </div>
       <div class="step" data-step="1" onclick="tryMatch(1)">
         <span class="idx">02 JD 解析</span>
@@ -409,19 +425,42 @@ body.has-sidebar #topBrand { display: none; }
         <div class="panel-head">
           <div>
             <h2 id="matchTitle">匹配一个新岗位</h2>
-            <p>简历解析已在职业库完成。此处只需贴 JD，并选择要用的简历画像。</p>
+            <p>粘贴或上传 JD 截图，系统自动提取岗位信息；可编辑确认后再解析。并选择简历画像。</p>
           </div>
-          <button class="btn btn-teal" type="button" onclick="startAnalysis()">开始 JD 解析</button>
+          <button class="btn btn-teal" type="button" id="btnStartJd" onclick="startAnalysis()">确认并开始 JD 解析</button>
         </div>
+
         <div class="field">
-          <label>JD 文本</label>
-          <textarea id="jdInput">岗位：高级产品经理（B 端增长）
-要求：
-1. 3 年以上 ToB 产品经验，有增长/转化相关落地
-2. 独立负责过从 0 到 1 或重大改版
-3. 能用数据驱动决策，熟悉漏斗与实验
-4. 跨职能协作强，能推动研发与销售落地
-加分：有 AI 产品或求职/教育方向经验</textarea>
+          <label>JD 截图</label>
+          <div
+            class="upload-zone"
+            id="jdShotZone"
+            tabindex="0"
+            onclick="document.getElementById('jdShotFile').click()"
+            ondragover="event.preventDefault(); this.classList.add('drag')"
+            ondragleave="this.classList.remove('drag')"
+            ondrop="onJdShotDrop(event)"
+          >
+            <strong>粘贴截图（Ctrl+V）或点击上传</strong>
+            <span>支持 PNG / JPG / WebP · 单张 ≤ 5MB · 识别后可在下方改文字</span>
+            <input id="jdShotFile" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" onchange="onJdShotFile(event)">
+          </div>
+          <div class="jd-shot-preview" id="jdShotPreview">
+            <img id="jdShotImg" alt="JD 截图预览">
+            <div class="meta">
+              <div id="jdShotMeta">未选择截图</div>
+              <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm" type="button" id="btnExtractJd" onclick="extractJdFromShot()" disabled>重新识别</button>
+                <button class="btn btn-ghost btn-sm" type="button" onclick="clearJdShot()">清除截图</button>
+              </div>
+            </div>
+          </div>
+          <div class="jd-extract-status" id="jdExtractStatus"></div>
+        </div>
+
+        <div class="field">
+          <label>识别结果（可编辑兜底）</label>
+          <textarea id="jdInput" placeholder="粘贴/上传截图后将自动填入；也可直接在此粘贴或修改 JD 文本…"></textarea>
           <div class="hint" id="rematchHint" hidden>重新匹配：将在同一岗位下新增版本，旧版保留。</div>
         </div>
         <div class="select-row" style="grid-template-columns:1fr;">

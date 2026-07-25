@@ -53,6 +53,121 @@ function fmt(iso) {
   }
 }
 
+/** 简历解析假阶段进度（对齐匹配页 Agent 进度条） */
+const PARSE_STAGES = ["上传文件…", "抽取文本…", "Resume Analyst 生成画像…"];
+let parseProgress = null; // { id, name, fileName, stage, status, error, timer }
+let parseBusy = false;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function resumeParseCardHtml(p) {
+  const statusClass =
+    p.status === "running" ? "running"
+    : p.status === "done" ? "done"
+    : p.status === "failed" ? "failed" : "";
+  const pill =
+    p.status === "running" ? `<span class="status-pill run">解析中</span>`
+    : p.status === "done" ? `<span class="status-pill ok">完成</span>`
+    : p.status === "failed" ? `<span class="status-pill idle">失败</span>`
+    : `<span class="status-pill idle">待命</span>`;
+  const stage =
+    p.status === "failed"
+      ? (p.error || "解析失败")
+      : p.status === "done"
+        ? "画像已生成"
+        : (p.stage || PARSE_STAGES[0]);
+  return `<article class="item-card resume-parse-card ${statusClass}" data-parse-id="${escapeHtml(p.id)}">
+    <div class="item-card-head"><div>
+      <h4 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${escapeHtml(p.name)} ${pill}
+      </h4>
+      <div class="sub">${escapeHtml(p.fileName || "")} · Resume Analyst</div>
+    </div></div>
+    <div class="progress"><i></i></div>
+    <div class="parse-stage" data-parse-stage>${escapeHtml(stage)}</div>
+  </article>`;
+}
+
+function startParseProgress({ id, name, fileName }) {
+  stopParseProgressTimer();
+  parseProgress = {
+    id,
+    name,
+    fileName: fileName || "",
+    stage: PARSE_STAGES[0],
+    status: "running",
+    error: "",
+    stageIndex: 0,
+    timer: null,
+  };
+  parseBusy = true;
+  parseProgress.timer = setInterval(() => {
+    if (!parseProgress || parseProgress.status !== "running") return;
+    parseProgress.stageIndex = Math.min(
+      parseProgress.stageIndex + 1,
+      PARSE_STAGES.length - 1,
+    );
+    parseProgress.stage = PARSE_STAGES[parseProgress.stageIndex];
+    const el = document.querySelector(`[data-parse-id="${CSS.escape(parseProgress.id)}"] [data-parse-stage]`);
+    if (el) el.textContent = parseProgress.stage;
+  }, 1100);
+  return parseProgress;
+}
+
+function stopParseProgressTimer() {
+  if (parseProgress?.timer) {
+    clearInterval(parseProgress.timer);
+    parseProgress.timer = null;
+  }
+}
+
+function finishParseProgress(ok, errorMsg) {
+  stopParseProgressTimer();
+  if (!parseProgress) return;
+  parseProgress.status = ok ? "done" : "failed";
+  parseProgress.stage = ok ? "画像已生成" : (errorMsg || "解析失败");
+  parseProgress.error = errorMsg || "";
+  if (parseProgress.stageIndex !== undefined) {
+    parseProgress.stageIndex = PARSE_STAGES.length - 1;
+  }
+}
+
+function clearParseProgress() {
+  stopParseProgressTimer();
+  parseProgress = null;
+  parseBusy = false;
+}
+
+async function runWithParseProgress({ id, name, fileName, onRender }, work) {
+  startParseProgress({ id, name, fileName });
+  onRender?.();
+  try {
+    const result = await work();
+    finishParseProgress(true);
+    onRender?.();
+    await sleep(450);
+    return result;
+  } catch (err) {
+    finishParseProgress(false, err.message || String(err));
+    onRender?.();
+    throw err;
+  } finally {
+    clearParseProgress();
+    onRender?.();
+  }
+}
+
+function setUploadControlsDisabled(disabled) {
+  const libBtn = document.querySelector('button[onclick*="libFile"]');
+  const libFile = document.getElementById("libFile");
+  const obFile = document.getElementById("obFile");
+  if (libBtn) libBtn.disabled = disabled;
+  if (libFile) libFile.disabled = disabled;
+  if (obFile) obFile.disabled = disabled;
+}
+
 let health = null;
 let resumes = [];
 let jobs = [];
@@ -88,6 +203,7 @@ async function boot() {
   }
 
   track("app_open");
+  document.addEventListener("paste", onJdPaste);
   try {
     health = await api("/api/health");
   } catch (e) {
@@ -153,21 +269,52 @@ function goToJdMatch() {
 async function obUpload(e) {
   const file = e.target.files?.[0];
   if (!file) return;
+  if (parseBusy) {
+    toast("正在解析，请稍候");
+    e.target.value = "";
+    return;
+  }
   const box = document.getElementById("obResumeResult");
   box.hidden = false;
-  box.innerHTML = `<strong>${escapeHtml(file.name)}</strong> · 上传并解析中…`;
   document.getElementById("obNext").disabled = true;
+  setUploadControlsDisabled(true);
+
+  const paint = () => {
+    if (parseProgress) {
+      box.innerHTML = resumeParseCardHtml(parseProgress);
+    }
+  };
+
   try {
-    const fd = new FormData();
-    fd.append("file", file);
-    const item = await api("/api/resumes/upload", { method: "POST", body: fd });
+    const item = await runWithParseProgress(
+      {
+        id: "__onboard__",
+        name: file.name.replace(/\.[^.]+$/, "") || file.name,
+        fileName: file.name,
+        onRender: paint,
+      },
+      async () => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return api("/api/resumes/upload", { method: "POST", body: fd });
+      },
+    );
     await refreshLibraries();
     showObResume(item);
     document.getElementById("obNext").disabled = item.status !== "parsed";
     toast("简历画像已生成");
   } catch (err) {
-    box.innerHTML = `<span class="badge err">失败</span> ${escapeHtml(err.message)}`;
+    box.innerHTML = resumeParseCardHtml({
+      id: "__onboard__",
+      name: file.name,
+      fileName: file.name,
+      status: "failed",
+      stage: err.message,
+      error: err.message,
+    });
     toast(err.message);
+  } finally {
+    setUploadControlsDisabled(false);
   }
   e.target.value = "";
 }
@@ -205,59 +352,109 @@ async function finishOnboarding() {
 /* ===== Library ===== */
 function renderLibrary() {
   const rl = document.getElementById("resumeList");
-  if (!resumes.length) {
+  if (!resumes.length && !(parseProgress && parseProgress.id === "__upload__")) {
     rl.innerHTML = `<div class="empty">还没有简历。点击「上传简历」。</div>`;
-  } else {
-    rl.innerHTML = resumes.map((r) => {
-      const badge =
-        r.status === "parsed" ? `<span class="badge ok">已解析</span>`
-        : r.status === "parsing" ? `<span class="badge run">解析中</span>`
-        : r.status === "failed" ? `<span class="badge err">失败</span>`
-        : `<span class="badge idle">${escapeHtml(r.status)}</span>`;
-      const p = r.profile;
-      const detail = p ? `<div class="detail-box">
-        <div class="bullet">${escapeHtml(p.summary || "")}</div>
-        <div class="bullet">证据：${(p.evidence || []).map(escapeHtml).join(" · ")}</div>
-        <div class="bullet">弱项：${(p.weak || []).map(escapeHtml).join(" · ")}</div>
-      </div>` : "";
-      return `<article class="item-card">
-        <div class="item-card-head"><div>
-          <h4>${escapeHtml(r.name)} ${badge}</h4>
-          <div class="sub">${escapeHtml(r.file_name)} · 更新 ${fmt(r.updated_at)}</div>
-        </div></div>
-        ${detail}
-        <div class="item-actions">
-          <button class="btn btn-teal btn-sm" type="button" onclick="reparseResume('${r.id}')">重新解析</button>
-          <button class="btn btn-secondary btn-sm" type="button" onclick="openResumeModal('${r.id}')">重命名</button>
-          <button class="btn btn-danger btn-sm" type="button" onclick="deleteResume('${r.id}')">删除</button>
-        </div>
-      </article>`;
-    }).join("");
+    return;
   }
+
+  const parts = [];
+  if (parseProgress && parseProgress.id === "__upload__") {
+    parts.push(resumeParseCardHtml(parseProgress));
+  }
+
+  for (const r of resumes) {
+    if (parseProgress && parseProgress.id === r.id) {
+      parts.push(resumeParseCardHtml({
+        ...parseProgress,
+        name: parseProgress.name || r.name,
+        fileName: parseProgress.fileName || r.file_name,
+      }));
+      continue;
+    }
+    const badge =
+      r.status === "parsed" ? `<span class="badge ok">已解析</span>`
+      : r.status === "parsing" ? `<span class="badge run">解析中</span>`
+      : r.status === "failed" ? `<span class="badge err">失败</span>`
+      : `<span class="badge idle">${escapeHtml(r.status)}</span>`;
+    const p = r.profile;
+    const detail = p ? `<div class="detail-box">
+      <div class="bullet">${escapeHtml(p.summary || "")}</div>
+      <div class="bullet">证据：${(p.evidence || []).map(escapeHtml).join(" · ")}</div>
+      <div class="bullet">弱项：${(p.weak || []).map(escapeHtml).join(" · ")}</div>
+    </div>` : "";
+    const actionsDisabled = parseBusy ? "disabled" : "";
+    parts.push(`<article class="item-card">
+      <div class="item-card-head"><div>
+        <h4>${escapeHtml(r.name)} ${badge}</h4>
+        <div class="sub">${escapeHtml(r.file_name)} · 更新 ${fmt(r.updated_at)}</div>
+      </div></div>
+      ${detail}
+      <div class="item-actions">
+        <button class="btn btn-teal btn-sm" type="button" ${actionsDisabled} onclick="reparseResume('${r.id}')">重新解析</button>
+        <button class="btn btn-secondary btn-sm" type="button" ${actionsDisabled} onclick="openResumeModal('${r.id}')">重命名</button>
+        <button class="btn btn-danger btn-sm" type="button" ${actionsDisabled} onclick="deleteResume('${r.id}')">删除</button>
+      </div>
+    </article>`);
+  }
+
+  rl.innerHTML = parts.join("") || `<div class="empty">还没有简历。点击「上传简历」。</div>`;
 }
 
 async function libUpload(e) {
   const file = e.target.files?.[0];
   if (!file) return;
-  toast("上传解析中…");
+  if (parseBusy) {
+    toast("正在解析，请稍候");
+    e.target.value = "";
+    return;
+  }
+  setUploadControlsDisabled(true);
   try {
-    const fd = new FormData();
-    fd.append("file", file);
-    await api("/api/resumes/upload", { method: "POST", body: fd });
+    await runWithParseProgress(
+      {
+        id: "__upload__",
+        name: file.name.replace(/\.[^.]+$/, "") || file.name,
+        fileName: file.name,
+        onRender: () => renderLibrary(),
+      },
+      async () => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return api("/api/resumes/upload", { method: "POST", body: fd });
+      },
+    );
     await refreshLibraries();
     renderLibrary();
     fillSelectors();
     toast("画像已生成");
   } catch (err) {
     toast(err.message);
+    await refreshLibraries();
+    renderLibrary();
+  } finally {
+    setUploadControlsDisabled(false);
   }
   e.target.value = "";
 }
 
 async function reparseResume(id) {
-  toast("重新解析中…");
+  if (parseBusy) {
+    toast("正在解析，请稍候");
+    return;
+  }
+  const r = resumes.find((x) => x.id === id);
+  if (!r) return;
+  setUploadControlsDisabled(true);
   try {
-    await api(`/api/resumes/${id}/parse`, { method: "POST" });
+    await runWithParseProgress(
+      {
+        id,
+        name: r.name,
+        fileName: r.file_name,
+        onRender: () => renderLibrary(),
+      },
+      async () => api(`/api/resumes/${id}/parse`, { method: "POST" }),
+    );
     await refreshLibraries();
     renderLibrary();
     fillSelectors();
@@ -266,6 +463,8 @@ async function reparseResume(id) {
     toast(err.message);
     await refreshLibraries();
     renderLibrary();
+  } finally {
+    setUploadControlsDisabled(false);
   }
 }
 
@@ -308,6 +507,121 @@ async function saveResumeName() {
   }
 }
 
+/* ===== JD 截图识别 ===== */
+let jdShotFileBlob = null;
+let jdExtractBusy = false;
+
+function setJdExtractStatus(msg) {
+  const el = document.getElementById("jdExtractStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function clearJdShot() {
+  jdShotFileBlob = null;
+  const img = document.getElementById("jdShotImg");
+  if (img) {
+    img.removeAttribute("src");
+  }
+  document.getElementById("jdShotPreview")?.classList.remove("show");
+  const btn = document.getElementById("btnExtractJd");
+  if (btn) btn.disabled = true;
+  const meta = document.getElementById("jdShotMeta");
+  if (meta) meta.textContent = "未选择截图";
+  setJdExtractStatus("");
+  const f = document.getElementById("jdShotFile");
+  if (f) f.value = "";
+}
+
+function showJdShotPreview(file) {
+  const url = URL.createObjectURL(file);
+  const img = document.getElementById("jdShotImg");
+  img.onload = () => URL.revokeObjectURL(url);
+  img.src = url;
+  document.getElementById("jdShotPreview").classList.add("show");
+  document.getElementById("btnExtractJd").disabled = false;
+  const mb = (file.size / 1024 / 1024).toFixed(2);
+  document.getElementById("jdShotMeta").textContent =
+    `${file.name || "粘贴的截图"} · ${mb} MB`;
+}
+
+function validateJdImage(file) {
+  const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+  if (!file || !allowed.includes(file.type)) {
+    toast("请使用 PNG / JPG / WebP 截图");
+    return false;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast("截图过大，上限 5MB，请重传");
+    return false;
+  }
+  return true;
+}
+
+async function acceptJdShot(file) {
+  if (!validateJdImage(file)) return;
+  jdShotFileBlob = file;
+  showJdShotPreview(file);
+  await extractJdFromShot();
+}
+
+async function extractJdFromShot() {
+  if (!jdShotFileBlob) {
+    toast("请先粘贴或上传截图");
+    return;
+  }
+  if (jdExtractBusy) return;
+  jdExtractBusy = true;
+  document.getElementById("btnExtractJd").disabled = true;
+  setJdExtractStatus("正在识别截图中的岗位信息…");
+  try {
+    const fd = new FormData();
+    fd.append("file", jdShotFileBlob, jdShotFileBlob.name || "jd-screenshot.png");
+    const data = await api("/api/match/extract-jd-image", { method: "POST", body: fd });
+    document.getElementById("jdInput").value = data.jd_text || "";
+    setJdExtractStatus(
+      data.notes
+        ? `识别完成：${data.notes}。请核对下方文字后点击「确认并开始 JD 解析」。`
+        : "识别完成。请核对下方文字后点击「确认并开始 JD 解析」。",
+    );
+    toast("识别完成，请核对文字");
+  } catch (err) {
+    setJdExtractStatus("识别失败，请重传更清晰的截图");
+    toast(err.message || "识别失败，请重传截图");
+  } finally {
+    jdExtractBusy = false;
+    document.getElementById("btnExtractJd").disabled = !jdShotFileBlob;
+  }
+}
+
+function onJdShotFile(e) {
+  const file = e.target.files?.[0];
+  if (file) acceptJdShot(file);
+}
+
+function onJdShotDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove("drag");
+  const file = e.dataTransfer?.files?.[0];
+  if (file) acceptJdShot(file);
+}
+
+function onJdPaste(e) {
+  const matchView = document.getElementById("view-match");
+  if (!matchView?.classList.contains("active")) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type && item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) {
+        e.preventDefault();
+        acceptJdShot(file);
+      }
+      return;
+    }
+  }
+}
+
 /* ===== Match ===== */
 function fillSelectors() {
   const rs = document.getElementById("selResume");
@@ -342,6 +656,8 @@ function startNewMatch() {
   document.getElementById("btnToReport").disabled = true;
   document.getElementById("matchTitle").textContent = "匹配一个新岗位";
   document.getElementById("rematchHint").hidden = true;
+  document.getElementById("jdInput").value = "";
+  clearJdShot();
   fillSelectors();
   switchView("match");
   goMatch(0);
@@ -357,6 +673,8 @@ function startRematch(jobId) {
   document.getElementById("matchTitle").textContent = "重新匹配 · " + job.title;
   document.getElementById("rematchHint").hidden = false;
   document.getElementById("jdInput").value = job.jd_text;
+  clearJdShot();
+  setJdExtractStatus("已载入该岗位上次 JD 文本，可直接确认解析，或粘贴新截图覆盖。");
   fillSelectors();
   switchView("match");
   goMatch(0);
@@ -366,7 +684,7 @@ function startRematch(jobId) {
 async function startAnalysis() {
   if (!canMatch()) { toast("请先准备至少一份已解析简历"); return; }
   const jd = document.getElementById("jdInput").value.trim();
-  if (jd.length < 20) { toast("请粘贴完整 JD"); return; }
+  if (jd.length < 20) { toast("请先识别截图或粘贴完整 JD 文本"); return; }
   if (!document.getElementById("selResume").value) {
     toast("请选择简历画像"); return;
   }
