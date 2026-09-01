@@ -18,14 +18,22 @@ def health(user: dict = Depends(get_current_user)):
             "SELECT COUNT(*) AS c FROM resumes WHERE status = 'parsed' AND user_id = ?",
             (uid,),
         ).fetchone()["c"]
+    # onboarded = 用户自己的已解析简历（不含共享示例）
     onboarded = parsed > 0
     return {
         "ok": True,
         "llm_configured": settings.llm_configured,
         "llm_mode": settings.llm_mode,
         "model": settings.glm_model,
+        "fast_model": settings.glm_fast_model,
+        "action_model": settings.glm_action_model,
+        "vision_model": settings.glm_vision_model,
+        "vision_ready": settings.llm_configured and settings.llm_mode != "mock",
+        "input_pipeline_version": "input-v2-tiles",
+        "jd_image_max_mb": settings.jd_image_max_mb,
         "base_url": settings.glm_base_url,
         "onboarded": onboarded,
+        "has_sample": True,
         "user": {"id": user["id"], "username": user["username"], "role": user["role"]},
         "counts": {"resumes": resumes, "parsed_resumes": parsed},
     }

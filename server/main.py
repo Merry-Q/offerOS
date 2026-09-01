@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from server.auth import seed_admin_user
 from server.config import settings
 from server.db import init_db
-from server.routers import analytics, auth, health, matches, resumes
+from server.routers import analytics, auth, dashboard, health, matches, preferences, resumes
+from server.sample_data import seed_sample_resume
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
@@ -33,7 +34,9 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(resumes.router, prefix="/api")
 app.include_router(matches.router, prefix="/api")
+app.include_router(preferences.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -41,6 +44,14 @@ def on_startup():
     settings.ensure_dirs()
     init_db()
     seed_admin_user()
+    seed_sample_resume()
+
+
+def _html(name: str) -> FileResponse:
+    return FileResponse(
+        STATIC / name,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/healthz")
@@ -51,32 +62,32 @@ def healthz():
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return _html("index.html")
 
 
 @app.get("/login")
 def login_page():
-    return FileResponse(STATIC / "login.html")
+    return _html("login.html")
 
 
 @app.get("/register")
 def register_page():
-    return FileResponse(STATIC / "register.html")
+    return _html("register.html")
 
 
 @app.get("/admin")
 def admin_page():
-    return FileResponse(STATIC / "admin.html")
+    return _html("admin.html")
 
 
 @app.get("/admin/login")
 def admin_login_page():
-    return FileResponse(STATIC / "admin-login.html")
+    return _html("admin-login.html")
 
 
 @app.get("/admin/register")
 def admin_register_page():
-    return FileResponse(STATIC / "admin-register.html")
+    return _html("admin-register.html")
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")

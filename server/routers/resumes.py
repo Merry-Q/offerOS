@@ -8,24 +8,48 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from server.agents.resume_agent import analyze_resume
+from server.llm import llm
 from server.auth import get_current_user
 from server.config import settings
 from server.db import dumps, get_db, loads, utc_now
 from server.files import extract_text_from_file
 from server.routers.analytics import track_event
+from server.sample_data import SAMPLE_RESUME_ID, is_sample_resume
 
 router = APIRouter(tags=["resumes"])
 
+RESUME_SELECT = (
+    "id, name, file_name, file_type, status, profile_json, direction_tag, created_at, updated_at"
+)
 
-class RenameBody(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+
+class PatchResumeBody(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    direction_tag: str | None = Field(None, max_length=80)
 
 
-def _serialize(row) -> dict[str, Any]:
+class AppendStoryBody(BaseModel):
+    section: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=4000)
+    source_label: str | None = Field(None, max_length=120)
+
+
+class ProfileBody(BaseModel):
+    profile: dict[str, Any]
+
+
+class InterviewReportBody(BaseModel):
+    transcript: str = Field(min_length=10, max_length=50000)
+    questions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _serialize(row, *, is_sample: bool = False) -> dict[str, Any]:
     d = dict(row)
     d["profile"] = loads(d.pop("profile_json", None), None)
     d.pop("raw_text", None)
     d.pop("file_path", None)
+    d["direction_tag"] = d.get("direction_tag") or ""
+    d["is_sample"] = is_sample or is_sample_resume(d.get("id", ""))
     return d
 
 
@@ -33,11 +57,17 @@ def _serialize(row) -> dict[str, Any]:
 def list_resumes(user: dict = Depends(get_current_user)):
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, file_name, file_type, status, profile_json, created_at, updated_at "
-            "FROM resumes WHERE user_id = ? ORDER BY updated_at DESC",
+            f"SELECT {RESUME_SELECT} FROM resumes WHERE user_id = ? ORDER BY updated_at DESC",
             (user["id"],),
         ).fetchall()
-    return {"items": [_serialize(r) for r in rows]}
+        sample = conn.execute(
+            f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?",
+            (SAMPLE_RESUME_ID,),
+        ).fetchone()
+    items = [_serialize(r) for r in rows]
+    if sample:
+        items.append(_serialize(sample, is_sample=True))
+    return {"items": items}
 
 
 @router.post("/resumes/upload")
@@ -74,6 +104,8 @@ async def upload_resume(file: UploadFile = File(...), user: dict = Depends(get_c
 
 @router.post("/resumes/{resume_id}/parse")
 def parse_resume(resume_id: str, user: dict = Depends(get_current_user)):
+    if is_sample_resume(resume_id):
+        raise HTTPException(400, "示例简历不可重新解析")
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
@@ -113,8 +145,7 @@ def parse_resume(resume_id: str, user: dict = Depends(get_current_user)):
             (status, raw_text, dumps(profile), now, resume_id),
         )
         row = conn.execute(
-            "SELECT id, name, file_name, file_type, status, profile_json, created_at, updated_at "
-            "FROM resumes WHERE id = ?",
+            f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?",
             (resume_id,),
         ).fetchone()
     result = _serialize(row)
@@ -123,41 +154,177 @@ def parse_resume(resume_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.patch("/resumes/{resume_id}")
-def rename_resume(resume_id: str, body: RenameBody, user: dict = Depends(get_current_user)):
-    with get_db() as conn:
-        cur = conn.execute(
-            "UPDATE resumes SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-            (body.name.strip(), utc_now(), resume_id, user["id"]),
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "简历不存在")
-        row = conn.execute(
-            "SELECT id, name, file_name, file_type, status, profile_json, created_at, updated_at "
-            "FROM resumes WHERE id = ?",
-            (resume_id,),
-        ).fetchone()
-    return _serialize(row)
+def patch_resume(resume_id: str, body: PatchResumeBody, user: dict = Depends(get_current_user)):
+    if is_sample_resume(resume_id):
+        raise HTTPException(400, "示例简历不可修改")
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "没有可更新的字段")
+    if "name" in fields and not (fields["name"] or "").strip():
+        raise HTTPException(400, "名称不能为空")
 
-
-@router.delete("/resumes/{resume_id}")
-def delete_resume(resume_id: str, user: dict = Depends(get_current_user)):
     with get_db() as conn:
-        parsed = conn.execute(
-            "SELECT COUNT(*) AS c FROM resumes WHERE status = 'parsed' AND user_id = ?",
-            (user["id"],),
-        ).fetchone()["c"]
         row = conn.execute(
             "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
             (resume_id, user["id"]),
         ).fetchone()
         if not row:
             raise HTTPException(404, "简历不存在")
-        if row["status"] == "parsed" and parsed <= 1:
-            raise HTTPException(400, "至少保留一份已解析简历")
+
+        sets: list[str] = []
+        vals: list[Any] = []
+        if "name" in fields:
+            sets.append("name = ?")
+            vals.append(fields["name"].strip())
+        if "direction_tag" in fields:
+            sets.append("direction_tag = ?")
+            vals.append((fields["direction_tag"] or "").strip() or None)
+        sets.append("updated_at = ?")
+        vals.append(utc_now())
+        vals.extend([resume_id, user["id"]])
+        conn.execute(
+            f"UPDATE resumes SET {', '.join(sets)} WHERE id = ? AND user_id = ?",
+            vals,
+        )
+        row = conn.execute(
+            f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?",
+            (resume_id,),
+        ).fetchone()
+    track_event(
+        "resume_patch",
+        {"resume_id": resume_id, "fields": list(fields.keys())},
+        user_id=user["id"],
+    )
+    return _serialize(row)
+
+
+@router.put("/resumes/{resume_id}/profile")
+def replace_profile(resume_id: str, body: ProfileBody, user: dict = Depends(get_current_user)):
+    """保存用户确认过的画像；额外能力必须由前端标记 source=用户补充。"""
+    if is_sample_resume(resume_id):
+        raise HTTPException(400, "示例简历不可修改")
+    allowed = {
+        "summary", "knowledge_skills", "work_experience", "core_abilities",
+        "personality_traits", "suitable_roles", "strengths", "weak", "evidence",
+        "skills", "years",
+    }
+    profile = {k: v for k, v in body.profile.items() if k in allowed}
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM resumes WHERE id = ? AND user_id = ?", (resume_id, user["id"])
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "简历不存在")
+        conn.execute(
+            "UPDATE resumes SET profile_json = ?, updated_at = ? WHERE id = ?",
+            (dumps(profile), utc_now(), resume_id),
+        )
+        out = conn.execute(f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?", (resume_id,)).fetchone()
+    return _serialize(out)
+
+
+@router.post("/resumes/{resume_id}/interview-report")
+def interview_report(
+    resume_id: str, body: InterviewReportBody, user: dict = Depends(get_current_user)
+):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT profile_json FROM resumes WHERE id = ? AND (user_id = ? OR id = ?)",
+            (resume_id, user["id"], SAMPLE_RESUME_ID),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "简历不存在")
+    fallback = {
+        "overall": "回答已完成，建议继续补充具体情境、个人动作与可验证结果。",
+        "scores": {"内容": 70, "结构": 65, "证据": 60, "表达": 70},
+        "strengths": ["能够围绕问题作答"],
+        "improvements": ["用 STAR 结构补充背景、任务、行动和结果"],
+        "next_practice": ["重新回答证据最弱的一题"],
+    }
+    system = """你是求职模拟面试官。依据候选人画像、题目与实时转写稿生成复盘报告。
+只输出 JSON：{"overall":"总评","scores":{"内容":0-100,"结构":0-100,"证据":0-100,"表达":0-100},
+"strengths":["..."],"improvements":["具体到某个回答"],"next_practice":["下一步练习"]}。
+不得编造转写稿中不存在的回答。"""
+    payload = {
+        "profile": loads(row["profile_json"], {}),
+        "questions": body.questions[:20],
+        "transcript": body.transcript,
+    }
+    report, meta = llm.complete_json(system, str(payload), fallback, max_tokens=1200)
+    return {"report": report if isinstance(report, dict) else fallback, "llm": meta}
+
+
+@router.post("/resumes/{resume_id}/append-story")
+def append_story(resume_id: str, body: AppendStoryBody, user: dict = Depends(get_current_user)):
+    """追加证据到 profile.evidence + raw_text，不做完整 LLM 重解析。"""
+    if is_sample_resume(resume_id):
+        raise HTTPException(400, "示例简历不可修改")
+    uid = user["id"]
+    section = body.section.strip()
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "内容不能为空")
+    label = (body.source_label or section).strip()
+    bullet = f"[{label}] {text}"
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
+            (resume_id, uid),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "简历不存在")
+        if row["status"] != "parsed":
+            raise HTTPException(400, "仅已解析简历可追加经历")
+
+        profile = loads(row["profile_json"], {}) or {}
+        evidence = list(profile.get("evidence") or [])
+        evidence.append(bullet)
+        profile["evidence"] = evidence[:40]
+
+        strengths = list(profile.get("strengths") or [])
+        note = f"{section}：{text[:80]}"
+        if note not in strengths:
+            strengths.append(note)
+            profile["strengths"] = strengths[:12]
+
+        raw = row["raw_text"] or ""
+        append_line = f"\n\n## {section}\n- {text}"
+        raw_text = (raw + append_line).strip()
+        now = utc_now()
+        conn.execute(
+            "UPDATE resumes SET profile_json = ?, raw_text = ?, updated_at = ? WHERE id = ?",
+            (dumps(profile), raw_text, now, resume_id),
+        )
+        out = conn.execute(
+            f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?",
+            (resume_id,),
+        ).fetchone()
+
+    track_event(
+        "resume_append_story",
+        {"resume_id": resume_id, "section": section},
+        user_id=uid,
+    )
+    return _serialize(out)
+
+
+@router.delete("/resumes/{resume_id}")
+def delete_resume(resume_id: str, user: dict = Depends(get_current_user)):
+    if is_sample_resume(resume_id):
+        raise HTTPException(400, "示例简历不可删除")
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
+            (resume_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "简历不存在")
         path = row["file_path"]
         conn.execute("DELETE FROM resumes WHERE id = ?", (resume_id,))
     try:
-        Path(path).unlink(missing_ok=True)
+        if path:
+            Path(path).unlink(missing_ok=True)
     except OSError:
         pass
     return {"ok": True}

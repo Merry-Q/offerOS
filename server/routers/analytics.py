@@ -20,16 +20,21 @@ class TrackBody(BaseModel):
 
 
 def track_event(event: str, props: dict[str, Any] | None = None, user_id: str | None = None) -> None:
+    """写入埋点。失败时吞掉异常，避免影响主业务流程。"""
     safe = {
         k: v
         for k, v in (props or {}).items()
         if k.lower() not in ("api_key", "key", "token", "authorization", "password")
     }
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO analytics_events (event, props_json, user_id, created_at) VALUES (?, ?, ?, ?)",
-            (event, dumps(safe), user_id, utc_now()),
-        )
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO analytics_events (event, props_json, user_id, created_at) VALUES (?, ?, ?, ?)",
+                (event, dumps(safe), user_id, utc_now()),
+            )
+    except Exception:  # noqa: BLE001
+        # 埋点不可阻断匹配/登录等主路径（例如 SQLite locked）
+        return
 
 
 @router.post("/analytics/track")
@@ -595,6 +600,34 @@ def summary(
         quality = _build_quality(conn, since, health)
         usage = _build_usage(conn, since, range_key, health, overview)
 
+        v2_event_names = [
+            "batch_start",
+            "batch_item_done",
+            "resume_draft_created",
+            "report_action_item_change",
+            "apply_status_change",
+            "bulk_apply_status_change",
+        ]
+        v2_counts = {}
+        for event_name in v2_event_names:
+            v2_counts[event_name] = conn.execute(
+                f"SELECT COUNT(*) AS c FROM analytics_events WHERE event=?{time_sql}",
+                [event_name, *time_params],
+            ).fetchone()["c"]
+        status_events = conn.execute(
+            f"""
+            SELECT props_json FROM analytics_events
+            WHERE event IN ('apply_status_change','bulk_apply_status_change'){time_sql}
+            """,
+            time_params,
+        ).fetchall()
+        status_progress = {"待投": 0, "已投": 0, "面试中": 0}
+        for row in status_events:
+            props = loads(row["props_json"], {}) or {}
+            target = props.get("to")
+            if target in status_progress:
+                status_progress[target] += int(props.get("count") or 1)
+
         payload = {
             "range": range_key,
             "since": since,
@@ -604,6 +637,15 @@ def summary(
             "health": health,
             "quality": quality,
             "usage": usage,
+            "v2_funnel": {
+                "batch_started": v2_counts["batch_start"],
+                "batch_items_completed": v2_counts["batch_item_done"],
+                "drafts_created": v2_counts["resume_draft_created"],
+                "report_actions": v2_counts["report_action_item_change"],
+                "entered_todo_apply": status_progress["待投"],
+                "confirmed_applied": status_progress["已投"],
+                "entered_interviewing": status_progress["面试中"],
+            },
             "insight": _build_insight(activation, returning, health, quality),
             "totals": {
                 "events": total_events,
