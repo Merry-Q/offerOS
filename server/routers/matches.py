@@ -1358,6 +1358,9 @@ def get_match_run(match_id: str, user: dict = Depends(get_current_user)):
         "judge": _judge_payload(out),
         "report": out.get("report"),
         "llm": out.get("llm_meta"),
+        "research": (out.get("llm_meta") or {}).get("research")
+        if isinstance(out.get("llm_meta"), dict)
+        else None,
         "starred": out.get("starred"),
         "batch_id": out.get("batch_id"),
         "recommended_action": out.get("recommended_action"),
@@ -2194,6 +2197,51 @@ def split_jd_api(body: SplitJdBody, user: dict = Depends(get_current_user)):
     }
 
 
+def _reuse_completed_match(uid: str, resume_id: str, jd_text: str) -> dict[str, Any] | None:
+    """Reuse a finished analysis for the same resume + JD (keeps demo presets instant)."""
+    digest = text_hash(jd_text)
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT mr.*, j.title AS job_title, j.company, j.location, j.employment_type
+            FROM match_runs mr
+            JOIN jobs j ON j.id = mr.job_id
+            WHERE j.user_id = ? AND mr.resume_id = ? AND mr.jd_text_hash = ?
+              AND mr.judge_status = 'done' AND mr.report_status = 'done'
+            ORDER BY mr.created_at DESC
+            LIMIT 1
+            """,
+            (uid, resume_id, digest),
+        ).fetchone()
+        if not row:
+            return None
+        out = _match_out(row)
+        meta = out.get("llm_meta") or {}
+        research = meta.get("research") if isinstance(meta, dict) else None
+    return {
+        "job_id": out["job_id"],
+        "match_id": out["id"],
+        "version": out["version"],
+        "title": row["job_title"],
+        "jd_profile": out.get("jd_profile"),
+        "judge": _judge_payload(out),
+        "report": out.get("report"),
+        "resume_name": out.get("resume_name"),
+        "resume_id": out.get("resume_id"),
+        "llm": meta,
+        "research": research,
+        "judge_status": "done",
+        "report_status": "done",
+        "report_modules": out.get("report_modules"),
+        "reused": True,
+        "cached": {"jd": True, "judge": True},
+        "recommended_action": out.get("recommended_action"),
+        "company": row["company"] or "",
+        "location": row["location"] or "",
+        "employment_type": row["employment_type"] or "",
+    }
+
+
 @router.post("/match/run")
 def run_match(
     body: RunMatchBody,
@@ -2206,6 +2254,9 @@ def run_match(
         if not resume or resume["status"] != "parsed":
             raise HTTPException(400, "请选择已解析的简历")
         resume_profile = loads(resume["profile_json"], {})
+    reused = _reuse_completed_match(uid, body.resume_id, body.jd_text)
+    if reused:
+        return reused
 
     return _run_match_core(
         uid=uid,

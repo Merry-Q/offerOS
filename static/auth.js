@@ -43,7 +43,7 @@ async function apiAuth(path, options = {}) {
   if (res.status === 401) {
     clearAuth();
     const isAdmin = location.pathname.startsWith("/admin");
-    location.href = isAdmin ? "/admin/login" : "/login";
+    location.href = isAdmin ? "/admin/login" : "/";
     throw new Error(data.detail || "请先登录");
   }
   if (!res.ok) {
@@ -53,9 +53,35 @@ async function apiAuth(path, options = {}) {
   return data;
 }
 
+async function enterDemo() {
+  const res = await fetch("/api/auth/demo", { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "演示入口暂不可用");
+  }
+  setAuth(data.token, data.user);
+  return data;
+}
+
 async function requireLogin({ admin = false } = {}) {
+  if (admin) {
+    if (!getToken()) {
+      location.href = "/admin/login";
+      return null;
+    }
+  } else {
+    try {
+      const data = await enterDemo();
+      window.__demoPresets = data.presets || [];
+      window.__demoSampleAnswer = data.sample_answer || "";
+      return { ...data.user, demo: true };
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }
   if (!getToken()) {
-    location.href = admin ? "/admin/login" : "/login";
+    location.href = "/admin/login";
     return null;
   }
   try {
@@ -80,7 +106,7 @@ async function logout(admin = false) {
     await apiAuth("/api/auth/logout", { method: "POST" });
   } catch (_) {}
   clearAuth();
-  location.href = admin ? "/admin/login" : "/login";
+  location.href = admin ? "/admin/login" : "/";
 }
 
 function ensurePasswordModal() {

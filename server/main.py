@@ -3,12 +3,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.auth import seed_admin_user
 from server.config import settings
 from server.db import init_db
+from server.demo import seed_demo_library
 from server.routers import analytics, auth, dashboard, health, matches, preferences, resumes
 from server.sample_data import seed_sample_resume
 
@@ -45,6 +46,7 @@ def on_startup():
     init_db()
     seed_admin_user()
     seed_sample_resume()
+    seed_demo_library(reset=True)
 
 
 def _html(name: str) -> FileResponse:
@@ -67,12 +69,12 @@ def index():
 
 @app.get("/login")
 def login_page():
-    return _html("login.html")
+    return RedirectResponse("/", status_code=302)
 
 
 @app.get("/register")
 def register_page():
-    return _html("register.html")
+    return RedirectResponse("/", status_code=302)
 
 
 @app.get("/admin")

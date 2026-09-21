@@ -14,6 +14,7 @@ from server.auth import (
 )
 from server.config import settings
 from server.db import get_db, utc_now
+from server.demo import issue_demo_session
 from server.routers.analytics import track_event
 
 router = APIRouter(tags=["auth"])
@@ -127,6 +128,14 @@ def admin_bootstrap_status():
     with get_db() as conn:
         count = _admin_count(conn)
     return {"admin_exists": count > 0, "can_register_admin": count == 0}
+
+
+@router.post("/auth/demo")
+def enter_demo():
+    """Public demo entry: no username/password. Shared fictional account."""
+    data = issue_demo_session()
+    track_event("auth_demo", {"role": "user"}, user_id=data["user"]["id"])
+    return data
 
 
 @router.post("/auth/login")
