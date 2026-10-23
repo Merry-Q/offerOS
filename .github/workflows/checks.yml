@@ -1,0 +1,41 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      LLM_MODE: mock
+      ENVIRONMENT: development
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install -r requirements.txt httpx
+      - run: python scripts/check_publish.py
+      - run: python -m unittest discover -s tests
+      - run: node --test tests/test_discovery_ui.cjs
+      - run: for file in static/*.js; do node --check "$file"; done
+      - run: docker build -t offeros-check .
+      - name: Verify production container
+        run: |
+          docker volume create offeros-check-data
+          docker run -d --name offeros-check --user 0 -p 8080:8080 -v offeros-check-data:/var/lib/offeros -e PORT=8080 -e ADMIN_PASSWORD=ci-only-not-a-real-secret -e LLM_MODE=mock offeros-check
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/healthz; then exit 0; fi
+            sleep 2
+          done
+          docker logs offeros-check
+          exit 1

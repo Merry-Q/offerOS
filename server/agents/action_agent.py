@@ -12,7 +12,7 @@ SHARED = """你是 OfferOS 的 Career Action Agent（资深求职教练 + 招聘
 硬性约束：
 1. 不重新评分，不改动 score / level / dims / threshold。
 2. 禁止编造简历没有的公司、项目、数据、职级、工具熟练度。
-3. 证据不足时明确写「简历未体现 / 需面试补证」，不要用空话填充。
+3. 候选人只提供固定职业标签。未出现的能力按没有处理，不要求补充简历外经历。不得生成具体经历；简历原文证据由本地程序绑定。
 4. 只输出合法 JSON，不要 Markdown，不要解释。
 5. 语言：简体中文；语气专业、具体、可执行，避免鸡汤与空泛形容词。
 写作：用因果链（要求→证据→缺口→行动）；优先具体动词；避免无证据套话。
@@ -70,38 +70,22 @@ SYSTEM_M2 = SHARED + """
 - strengths_detail 2-3 条；gaps_detail 3-5 条，可细化 judge.gaps 但不可矛盾。
 """
 
-SYSTEM_M3 = SHARED + """
-本模块只输出：
-{
-  "resume_rewrite": [
-    {
-      "section": "string",
-      "original": "string",
-      "problem": "string",
-      "rewrite": "60-140字：动作动词+方法/协作对象+可验证结果（禁止伪造精确指标）",
-      "why_better": "说明如何对齐该 JD",
-      "source_resume": "可选：若引用跨简历证据池，填来源简历名；否则空字符串"
-    }
-  ]
-}
-质量：3-4 条；同方向岗位针对句子润色；跨岗位或跨行业时，对完整项目进行结构化改写。
-每项增加 "rewrite_scope": "句子润色|项目改写"。优先覆盖 must_have 与关键 gaps。
-若提供「可用跨简历证据池」，可引用其中标注来源的真实证据辅助改写建议，禁止编造。
-"""
 
 SYSTEM_M4 = SHARED + """
 本模块只输出：
 {
   "interview": [
     {
-      "category": "行为|项目深挖|岗位知识|压力/反问",
+      "category": "职位侧",
+      "requirement": "对应的JD原文要求",
       "question": "string",
       "why_asked": "string",
       "framework": "string",
-      "sample_outline": "绑定真实经历；不足则写建议先补的证据清单",
+      "sample_outline": "业务或专业回答思路，不代写候选人经历",
+      "answer_points": ["3-5条具体回答要点，解释方法、适用条件、关键取舍、验证指标与常见误区"],
+      "knowledge_points": ["2-4条具体知识点，解释概念及使用场景"],
       "followups": ["string", "string"],
-      "pitfalls": ["string"],
-      "source_resume": "可选：若引用跨简历证据池，填来源简历名；否则空字符串"
+      "pitfalls": ["string"]
     }
   ],
   "interview_knowledge": {
@@ -110,12 +94,14 @@ SYSTEM_M4 = SHARED + """
     "questions_to_ask": ["正好3条"]
   }
 }
-质量：interview 5-8 题；类别尽量覆盖行为/项目/岗位知识/反问。
-若提供「可用跨简历证据池」，可在 sample_outline 中引用并标注来源，禁止编造。
+质量：interview 6-8题，全部为职位侧的业务/专业知识问题，依据JD的core_requirements与must_haves选题，至少覆盖3个不同主题。
+不输出泛泛的“讲一个项目”或“如何证明能力”，要提出具体场景、方案比较、指标口径、技术/业务机制问题。不能假设候选人已有这些能力。
+每题必须包含why_asked、framework、3-5条有实际知识内容的answer_points、knowledge_points、2条followups、pitfalls。
+只提供职业标签，不写候选人的公司、项目、指标或故事。简历经历题由本地程序根据原文生成，不在本模块编造。
+question_plan列出了每道题的主题，必须逐项覆盖，不能只返回第一题。回答要点是参考思路，不是该公司的内部标准答案。
+不得编造百分比、阈值、统计事实、公司内部流程。数值若只是举例必须明确写“假设示例”，不要把某个设计方案表述为唯一正确做法。
 """
 
-# 兼容旧引用名
-SYSTEM = SYSTEM_M1
 
 
 def _as_list(value: Any) -> list:
@@ -200,7 +186,7 @@ def mock_report(judge: dict, resume_profile: dict, jd_profile: dict) -> dict[str
     ]
 
     raw_gaps = _as_list(judge.get("gaps")) or [
-        {"severity": "fixable", "text": "部分要求需补量化 STAR"}
+        {"severity": "fixable", "text": "部分要求在当前简历中未具备"}
     ]
     gaps_detail = []
     for g in raw_gaps[:6]:
@@ -211,7 +197,7 @@ def mock_report(judge: dict, resume_profile: dict, jd_profile: dict) -> dict[str
                 "severity": g.get("severity") or "important",
                 "text": g.get("text") or "存在待补缺口",
                 "impact": "可能拉低简历证明分与首轮面试说服力",
-                "fix_plan": "用 1 段可验证项目经历补齐角色、方法与结果",
+                "fix_plan": "仅整理当前简历已有内容；未写出的能力不添加",
                 "interview_cover": "先承认边界，再讲已验证能力与学习闭环",
             }
         )
@@ -223,11 +209,11 @@ def mock_report(judge: dict, resume_profile: dict, jd_profile: dict) -> dict[str
         "one_liner": one_liner,
         "why_fit": [str(s) for s in strengths[:3]] or ["基础能力与岗位方向大体对齐"],
         "why_risk": [g["text"] for g in gaps_detail[:2]] or ["关键证明链仍偏弱"],
-        "decision_advice": f"建议按「{level}」策略处理：先改简历叙事再投，面试重点补证明链。",
+        "decision_advice": f"建议按「{level}」策略处理：先审阅门槛与技能缺口，再决定投递次序。",
         "next_7_days": [
             "按匹配表弱项改写 3 条简历子弹",
             "准备 2 个可深挖项目的 STAR",
-            "针对 must_have 缺口列出补证清单",
+            "确认 must_have 缺口对当前投递的影响",
         ],
     }
 
@@ -471,6 +457,9 @@ def _normalize_report(data: dict, fallback: dict, judge: dict) -> dict[str, Any]
             "sample_outline": q.get("sample_outline") or "",
             "followups": followups,
             "pitfalls": pitfalls,
+            "requirement": q.get("requirement") or "",
+            "answer_points": [str(x) for x in _as_list(q.get("answer_points")) if isinstance(x, str)],
+            "knowledge_points": [str(x) for x in _as_list(q.get("knowledge_points")) if isinstance(x, str)],
         }
         src = str(q.get("source_resume") or "").strip()
         if src:
@@ -493,16 +482,8 @@ def _normalize_report(data: dict, fallback: dict, judge: dict) -> dict[str, Any]
 
 
 def _judge_bundle(judge: dict) -> dict[str, Any]:
-    return {
-        "score": judge.get("score"),
-        "level": judge.get("level"),
-        "one_liner": judge.get("one_liner"),
-        "strengths": judge.get("strengths"),
-        "gaps": judge.get("gaps"),
-        "dims": judge.get("dims"),
-        "threshold": judge.get("threshold"),
-        "raw": judge.get("raw"),
-    }
+    # Historical judgments may quote private evidence. Only numeric state leaves locally.
+    return {key: judge.get(key) for key in ("score", "level", "threshold", "raw")}
 
 
 def _slice_fallback(fallback: dict, keys: tuple[str, ...]) -> dict[str, Any]:
@@ -515,16 +496,16 @@ def _run_module(
     fallback_slice: dict[str, Any],
     *,
     max_tokens: int,
+    model: str | None = None,
 ) -> tuple[dict[str, Any], dict]:
     data, meta = llm.complete_json(
         system,
         json.dumps(payload, ensure_ascii=False),
         fallback_slice,
-        model=llm.action_model,
+        model=model or llm.action_model,
         max_tokens=max_tokens,
         temperature=0.2,
         timeout=settings.llm_timeout_action,
-        disable_thinking=True,
     )
     if not isinstance(data, dict):
         return dict(fallback_slice), meta
@@ -590,14 +571,8 @@ ProgressCb = Callable[[dict[str, str], dict[str, Any] | None], None]
 
 
 def _compact_for_action(resume_profile: dict, jd_profile: dict) -> tuple[dict, dict]:
-    resume = {
-        "summary": (resume_profile.get("summary") or "")[:360],
-        "strengths": (resume_profile.get("strengths") or [])[:5],
-        "weak": (resume_profile.get("weak") or [])[:4],
-        "evidence": [str(x)[:140] for x in (resume_profile.get("evidence") or [])[:6]],
-        "skills": (resume_profile.get("skills") or [])[:10],
-        "years": resume_profile.get("years"),
-    }
+    from server.privacy import model_signals
+    resume = model_signals(resume_profile)
     jd = {
         "title": jd_profile.get("title"),
         "level": jd_profile.get("level"),
@@ -610,59 +585,30 @@ def _compact_for_action(resume_profile: dict, jd_profile: dict) -> tuple[dict, d
     return resume, jd
 
 
-def _format_evidence_pool(evidence_pool: list[dict] | None) -> str:
-    if not evidence_pool:
-        return ""
-    lines: list[str] = ["可用跨简历证据池（标注来源，禁止编造）："]
-    for item in evidence_pool[:6]:
-        name = item.get("resume_name") or item.get("resume_id") or "其他简历"
-        ev = [str(x) for x in (item.get("evidence") or [])[:4]]
-        st = [str(x) for x in (item.get("strengths") or [])[:3]]
-        sk = [str(x) for x in (item.get("skills") or [])[:6]]
-        chunk = f"来源《{name}》"
-        if ev:
-            chunk += "；证据：" + " / ".join(ev)
-        if st:
-            chunk += "；优势：" + " / ".join(st)
-        if sk:
-            chunk += "；技能：" + "、".join(sk)
-        lines.append("- " + chunk)
-    return "\n".join(lines)
-
-
 def build_action_report(
     judge: dict,
     resume_profile: dict,
     jd_profile: dict,
     on_progress: ProgressCb | None = None,
-    evidence_pool: list[dict] | None = None,
-    allow_cross_resume: bool = True,
 ) -> tuple[dict[str, Any], dict]:
-    """
-    四模块一轮并行（M1∥M2∥M3∥M4），墙钟 ≈ 最慢单模块，目标 ≤60s。
-    M3/M4 直接消费 judge.gaps，不串行等待 M2。
-    可选 evidence_pool：跨简历真实证据（需 allow_cross_resume）。
-    """
+    """三项模型建议并行；简历原文证据仅在本地绑定。"""
     fallback = mock_report(judge, resume_profile, jd_profile)
     resume_c, jd_c = _compact_for_action(resume_profile, jd_profile)
     base_user = {
         "judge": _judge_bundle(judge),
         "resume_profile": resume_c,
         "jd_profile": jd_c,
-        "gaps_hint": judge.get("gaps") or [],
+        "gaps_hint": [],
     }
-    pool_note = ""
-    use_pool = bool(allow_cross_resume and evidence_pool)
-    if use_pool:
-        pool_note = _format_evidence_pool(evidence_pool)
-        base_user["evidence_pool"] = evidence_pool[:6]
+    if resume_profile.get("evidence_version"):
+        base_user["evidence_policy"] = "仅依据给出的职业标签提供通用建议，原文证据由本地程序绑定。未写出的能力按不具备处理，不请求补充经历，不添加简历外的能力、项目或指标。"
     modules = {"m1": "pending", "m2": "pending", "m3": "pending", "m4": "pending"}
     partial: dict[str, Any] = {}
     metas: dict[str, Any] = {
         "modular": True,
-        "parallel": "m1-m4",
+        "parallel": "m1-m2-m4",
         "modules": {},
-        "cross_resume": use_pool,
+        "cross_resume": False,
     }
 
     def emit() -> None:
@@ -673,25 +619,14 @@ def build_action_report(
         modules[k] = "running"
     emit()
 
-    m3_payload = {
-        **base_user,
-        "reminders": ["resume_rewrite 3-4条", "禁止伪造精确指标"],
-    }
     m4_payload = {
         **base_user,
-        "reminders": ["interview 5-8题", "sample_outline 绑定简历证据"],
+        "reminders": ["6-8道职位侧业务/专业问题，每题包含具体回答要点、知识点和追问", "不编造候选人经历"],
     }
-    if pool_note:
-        m3_payload["cross_resume_note"] = pool_note
-        m4_payload["cross_resume_note"] = pool_note
-        m3_payload["reminders"] = list(m3_payload["reminders"]) + [
-            "可引用证据池并填写 source_resume，禁止编造"
-        ]
-        m4_payload["reminders"] = list(m4_payload["reminders"]) + [
-            "可引用证据池并填写 source_resume，禁止编造"
-        ]
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    from server.interview_preparation import role_question_fallback
+    m4_payload["question_plan"] = [{"topic": q["question"], "requirement": q["requirement"]} for q in role_question_fallback(jd_profile)]
+    m4_payload["expected_count"] = len(m4_payload["question_plan"])
+    with ThreadPoolExecutor(max_workers=3) as pool:
         fut_m1 = pool.submit(
             _run_module,
             SYSTEM_M1,
@@ -700,7 +635,7 @@ def build_action_report(
                 "reminders": ["conclusion 120-240字", "verdict 与 judge.level 一致"],
             },
             _slice_fallback(fallback, ("conclusion", "conclusion_structured", "score_narrative")),
-            max_tokens=1100,
+            max_tokens=1800,
         )
         fut_m2 = pool.submit(
             _run_module,
@@ -710,27 +645,21 @@ def build_action_report(
                 "reminders": ["match_table 覆盖 must_haves", "gaps 含 fix_plan"],
             },
             _slice_fallback(fallback, ("match_table", "strengths_detail", "gaps_detail")),
-            max_tokens=1400,
-        )
-        fut_m3 = pool.submit(
-            _run_module,
-            SYSTEM_M3,
-            m3_payload,
-            _slice_fallback(fallback, ("resume_rewrite",)),
-            max_tokens=1100,
+            max_tokens=3500,
         )
         fut_m4 = pool.submit(
             _run_module,
             SYSTEM_M4,
             m4_payload,
             _slice_fallback(fallback, ("interview", "interview_knowledge")),
-            max_tokens=1600,
+            max_tokens=6500,
+            model=llm.fast_model,
         )
 
         results = {
             "m1": fut_m1.result(),
             "m2": fut_m2.result(),
-            "m3": fut_m3.result(),
+            "m3": (_slice_fallback(fallback, ("resume_rewrite",)), {"used": False, "local": True, "reason": "简历整理保留本地原句，不发送原文给模型。"}),
             "m4": fut_m4.result(),
         }
 
@@ -738,11 +667,13 @@ def build_action_report(
         partial.update(chunk)
         modules[key] = "done"
         metas["modules"][key] = meta
+    partial = bind_local_evidence(partial, resume_profile, jd_profile)
     partial = ensure_must_have_coverage(partial, jd_profile, resume_profile)
     emit()
 
     report = _normalize_report(partial, fallback, judge)
     report = ensure_must_have_coverage(report, jd_profile, resume_profile)
+    report = bind_local_evidence(report, resume_profile, jd_profile)
 
     metas["used"] = any(
         bool((metas["modules"].get(k) or {}).get("used")) for k in ("m1", "m2", "m3", "m4")
@@ -756,3 +687,25 @@ def build_action_report(
         None,
     )
     return report, metas
+
+
+def bind_local_evidence(report: dict, profile: dict, jd: dict) -> dict:
+    """Model advice is generic; only local source-matched quotes can support a claim."""
+    import re
+    from server.privacy import SKILLS, local_signals
+    known = set(local_signals(profile)["skills"])
+    records = [r for key in ("skills", "work", "internships", "projects")
+               for r in (profile.get("resume_sections") or {}).get(key, [])]
+    for row in report.get("match_table") or []:
+        req = str(row.get("requirement") or "")
+        required = [tag for tag, pattern in SKILLS.items() if re.search(pattern, req, re.I)]
+        matched = [tag for tag in required if tag in known]
+        quotes = [r["quote"] for r in records if any(re.search(SKILLS[tag], str(r.get("value", "")), re.I) for tag in matched)]
+        row["evidence"] = "；".join(dict.fromkeys(quotes))[:900] if quotes else "当前简历未体现该要求"
+        row["strength"] = "中" if quotes else "缺失"
+        row["gap_note"] = "标签相关；原文仅支持对应部分，不能证明整条要求" if quotes else "按未具备处理"
+    report["strengths_detail"] = [{"text": tag, "evidence": "；".join(dict.fromkeys(r["quote"] for r in records if re.search(SKILLS[tag], str(r.get("value", "")), re.I)))[:600], "how_to_amplify": "仅使用档案中的已有事实对齐岗位要求。"} for tag in list(local_signals(profile)["skills"])[:3]]
+    # With no original evidence sent, the model cannot safely rewrite a candidate's story.
+    report["resume_rewrite"] = [{"section": "已有经历整理", "original": r["value"], "problem": "保留原始事实，按岗位相关性调整顺序。", "rewrite": r["value"], "why_better": "原文保留，不增添能力、雇主、项目或指标。", "rewrite_scope": "句子润色"} for r in records if r.get("label") in {"经历与成果", "项目经历", "工作经历", "实习经历", "工作成果", "项目行动", "项目结果", "项目边界与产出", "实习内容", "协作与交付"}][:3]
+    from server.interview_preparation import enrich_interview_preparation
+    return enrich_interview_preparation(report, profile, jd)

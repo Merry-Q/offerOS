@@ -37,7 +37,18 @@ def _extract_docx(path: Path) -> str:
     except ImportError as exc:
         raise RuntimeError("缺少 python-docx，请 pip install -r requirements.txt") from exc
     document = docx.Document(str(path))
-    text = "\n".join(p.text for p in document.paragraphs if p.text.strip()).strip()
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    parts = []
+    for element in document.element.body:
+        if element.tag == qn("w:p"):
+            parts.append(Paragraph(element, document).text)
+        elif element.tag == qn("w:tbl"):
+            for row in Table(element, document).rows:
+                parts.append(" | ".join(cell.text for cell in row.cells))
+    text = "\n".join(parts).strip()
     if not text:
         raise ValueError("Word 未能提取到文本")
     return text

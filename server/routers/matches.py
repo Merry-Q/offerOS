@@ -11,9 +11,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from server.agents.action_agent import build_action_report
-from server.agents.jd_agent import analyze_jd, extract_jd_from_image, job_tags_from_profile
+from server.agents.jd_agent import analyze_jd, job_tags_from_profile
 from server.agents.judge_agent import judge_match
-from server.agents.research_agent import research_company
+from server.agents.research_agent import research_company, clean_cached_research
 from server.agents.url_jd_agent import extract_jd_from_url
 from server.auth import get_current_user
 from server.cache_store import (
@@ -29,15 +29,11 @@ from server.config import settings
 from server.db import dumps, get_db, loads, utc_now
 from server.routers.analytics import track_event
 from server.sample_data import SAMPLE_RESUME_ID
+from server.resume_evidence import attach_resume_evidence
+from server.interview_preparation import enrich_interview_preparation
 
 router = APIRouter(tags=["matches"])
 
-ALLOWED_JD_IMAGE_TYPES = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/webp": ".webp",
-}
 
 APPLY_STATUSES = ("待决策", "待改简历", "待投", "已投", "面试中", "结束")
 ApplyStatus = Literal["待决策", "待改简历", "待投", "已投", "面试中", "结束"]
@@ -52,6 +48,7 @@ class ResearchBody(BaseModel):
     company: str = Field(min_length=1, max_length=120)
     title: str | None = Field(None, max_length=120)
     industry: str | None = Field(None, max_length=120)
+    match_id: str | None = None
 
 
 class SplitJdBody(BaseModel):
@@ -255,12 +252,13 @@ def _action_summary(report: dict[str, Any] | None, judge: dict[str, Any]) -> dic
 def _resolve_jd_profile(jd_text: str, provided: dict | None) -> tuple[dict[str, Any], dict]:
     if provided:
         return provided, {"used": False, "cached": False, "reason": "复用上一步 JD 档案"}
-    key = jd_cache_key(jd_text)
+    key = jd_cache_key("jd-parse-v3:" + jd_text)
     hit = cache_get(key)
     if isinstance(hit, dict) and hit.get("title"):
         return hit, {"used": False, "cached": True, "reason": "JD 档案缓存命中"}
     profile, meta = analyze_jd(jd_text)
-    cache_set(key, "jd_profile", profile)
+    if meta.get("used"):
+        cache_set(key, "jd_profile", profile)
     meta = {**meta, "cached": False}
     return profile, meta
 
@@ -271,7 +269,8 @@ def _resolve_judge(
     jd_profile: dict,
     resume_profile: dict,
 ) -> tuple[dict[str, Any], dict]:
-    key = judge_cache_key(resume_id, jd_text)
+    evidence_key = "privacy-v1:" + resume_id + ":" + text_hash(dumps(resume_profile.get("resume_sections") or {})) + ":" + text_hash(dumps(jd_profile))
+    key = judge_cache_key(evidence_key, jd_text)
     hit = cache_get(key)
     if isinstance(hit, dict) and hit.get("score") is not None and hit.get("level"):
         return hit, {"used": False, "cached": True, "reason": "判分缓存命中"}
@@ -295,9 +294,6 @@ def _set_report_status(
         row = conn.execute("SELECT llm_meta_json FROM match_runs WHERE id = ?", (match_id,)).fetchone()
         if not row:
             return
-        meta = loads(row["llm_meta_json"], {}) or {}
-        if llm_meta is not None:
-            meta = {**meta, **llm_meta}
         conn.execute(
             """
             UPDATE match_runs SET
@@ -305,7 +301,7 @@ def _set_report_status(
               report_error = ?,
               report_updated_at = ?,
               report_json = COALESCE(?, report_json),
-              llm_meta_json = ?,
+              llm_meta_json = json_patch(COALESCE(llm_meta_json, '{}'), ?),
               report_duration_ms = COALESCE(?, report_duration_ms),
               report_modules_json = COALESCE(?, report_modules_json)
             WHERE id = ?
@@ -315,49 +311,12 @@ def _set_report_status(
                 error,
                 now,
                 dumps(report) if report is not None else None,
-                dumps(meta),
+                dumps(llm_meta or {}),
                 report_duration_ms,
                 dumps(report_modules) if report_modules is not None else None,
                 match_id,
             ),
         )
-
-
-def _load_evidence_pool(user_id: str, primary_resume_id: str) -> tuple[list[dict], bool]:
-    """加载跨简历证据池；返回 (pool, allow_cross)。"""
-    allow_cross = True
-    with get_db() as conn:
-        pref = conn.execute(
-            "SELECT allow_cross_resume FROM preferences WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        if pref is not None and pref["allow_cross_resume"] is not None:
-            allow_cross = bool(pref["allow_cross_resume"])
-        if not allow_cross:
-            return [], False
-        rows = conn.execute(
-            "SELECT id, name, profile_json FROM resumes WHERE user_id = ? AND status = ?",
-            (user_id, "parsed"),
-        ).fetchall()
-    pool: list[dict] = []
-    for r in rows:
-        if r["id"] == primary_resume_id:
-            continue
-        profile = loads(r["profile_json"], {}) or {}
-        evidence = profile.get("evidence") or []
-        strengths = profile.get("strengths") or []
-        if not evidence and not strengths:
-            continue
-        pool.append(
-            {
-                "resume_id": r["id"],
-                "resume_name": r["name"],
-                "evidence": [str(x)[:160] for x in evidence[:8]],
-                "strengths": [str(x)[:80] for x in strengths[:5]],
-                "skills": (profile.get("skills") or [])[:10],
-            }
-        )
-    return pool, True
 
 
 def _generate_report_job(
@@ -372,7 +331,8 @@ def _generate_report_job(
     bust_cache: bool = False,
 ) -> None:
     """后台线程：模块化生成 Action 报告，并增量落库。"""
-    rkey = report_cache_key(resume_id, jd_text)
+    evidence_key = "privacy-v1:" + resume_id + ":" + text_hash(dumps(resume_profile.get("resume_sections") or {}))
+    rkey = report_cache_key("interview-preparation-v4:" + evidence_key + ":" + text_hash(dumps(jd_profile)), jd_text)
     if bust_cache:
         cache_delete(rkey)
     else:
@@ -383,7 +343,7 @@ def _generate_report_job(
                 match_id,
                 "done",
                 report=cached,
-                llm_meta={"action": {"used": False, "cached": True, "modular": True}},
+                llm_meta={"action": {"used": False, "cached": True, "modular": True, "content_version": 4}},
                 error=None,
                 report_duration_ms=0,
                 report_modules=mods,
@@ -422,22 +382,14 @@ def _generate_report_job(
         )
 
     try:
-        evidence_pool, allow_cross = _load_evidence_pool(user_id, resume_id)
-        if evidence_pool and allow_cross:
-            track_event(
-                "cross_resume_report",
-                {"match_id": match_id, "pool_size": len(evidence_pool)},
-                user_id=user_id,
-            )
         report, action_meta = build_action_report(
             judge,
             resume_profile,
             jd_profile,
             on_progress=on_progress,
-            evidence_pool=evidence_pool if allow_cross else None,
-            allow_cross_resume=allow_cross,
         )
         duration_ms = int((time.time() - t0) * 1000)
+        action_meta["content_version"] = 4
         cache_set(rkey, "report", report)
         _set_report_status(
             match_id,
@@ -459,7 +411,7 @@ def _generate_report_job(
                 "async": True,
                 "modular": True,
                 "cached": False,
-                "cross_resume": bool(evidence_pool and allow_cross),
+                "cross_resume": False,
             },
             user_id=user_id,
         )
@@ -490,7 +442,7 @@ def _generate_report_job(
 def _owned_match(conn, match_id: str, user_id: str):
     return conn.execute(
         """
-        SELECT mr.*, j.user_id AS job_user_id, j.title AS job_title, j.jd_text AS job_jd_text
+        SELECT mr.*, j.user_id AS job_user_id, j.title AS job_title, j.company AS job_company, j.jd_text AS job_jd_text
         FROM match_runs mr
         JOIN jobs j ON j.id = mr.job_id
         WHERE mr.id = ? AND j.user_id = ?
@@ -733,8 +685,6 @@ def _run_match_core(
             },
             user_id=uid,
         )
-    else:
-        cache_set(jd_cache_key(jd_text), "jd_profile", jd_profile)
 
     if title_override:
         jd_profile = {**jd_profile, "title": title_override}
@@ -758,7 +708,8 @@ def _run_match_core(
         user_id=uid,
     )
 
-    llm_meta = {"jd": jd_meta, "judge": judge_meta}
+    llm_meta = {"jd": jd_meta, "judge": judge_meta, "privacy_version": 1, "jd_parse_version": 3,
+                "resume_evidence_hash": text_hash(dumps(resume_profile.get("resume_sections") or {}))}
     mode_used = any(m.get("used") for m in (jd_meta, judge_meta))
     track_event(
         "llm_mode",
@@ -862,10 +813,20 @@ def _run_match_core(
 
 
 def _fetch_resume(conn, resume_id: str, uid: str):
-    return conn.execute(
+    row = conn.execute(
         "SELECT * FROM resumes WHERE id = ? AND (user_id = ? OR id = ?)",
         (resume_id, uid, SAMPLE_RESUME_ID),
     ).fetchone()
+    return _resume_with_evidence(row) if row else None
+
+
+def _resume_with_evidence(row) -> dict:
+    item = dict(row)
+    profile = loads(item.get("profile_json"), {}) or {}
+    if item.get("raw_text"):
+        profile = attach_resume_evidence(profile, item["raw_text"])
+    item["profile_json"] = dumps(profile)
+    return item
 
 
 def _list_parsed_resumes(uid: str) -> list[Any]:
@@ -881,7 +842,7 @@ def _list_parsed_resumes(uid: str) -> list[Any]:
     items = list(rows)
     if sample:
         items.append(sample)
-    return items
+    return [_resume_with_evidence(row) for row in items]
 
 
 def _tokens(text: str) -> set[str]:
@@ -1336,6 +1297,12 @@ def get_match_run(match_id: str, user: dict = Depends(get_current_user)):
         if not row:
             raise HTTPException(404, "匹配记录不存在")
         out = _match_out(row)
+        if out.get("report"):
+            resume = _fetch_resume(conn, out.get("resume_id"), user["id"])
+            profile = loads(resume["profile_json"], {}) if resume else {}
+            out["report"] = enrich_interview_preparation(out["report"], profile, out.get("jd_profile") or {})
+        if isinstance(out.get("llm_meta"), dict) and out["llm_meta"].get("research"):
+            out["llm_meta"]["research"] = clean_cached_research(out["llm_meta"]["research"])
         action_rows = conn.execute(
             "SELECT item_key,completed FROM report_action_items WHERE match_id=? AND user_id=?",
             (match_id, user["id"]),
@@ -1345,6 +1312,7 @@ def get_match_run(match_id: str, user: dict = Depends(get_current_user)):
         "match_id": out["id"],
         "version": out["version"],
         "title": row["job_title"],
+        "company": row["job_company"],
         "resume_id": out.get("resume_id"),
         "resume_name": out["resume_name"],
         "pref_name": out.get("pref_name") or "",
@@ -1529,7 +1497,6 @@ def extract_jd_url_api(body: ExtractJdUrlBody, user: dict = Depends(get_current_
     if result.get("degraded") or result.get("source_url"):
         return payload
     raise HTTPException(400, result.get("notes") or "无法从该链接提取有效 JD")
-
 
 
 @router.post("/match/recommend-resume")
@@ -2022,80 +1989,9 @@ def retry_batch_item(
 
 @router.post("/match/extract-jd-image")
 async def extract_jd_image_api(
-    file: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
+    file: UploadFile = File(...), user: dict = Depends(get_current_user),
 ):
-    """从 JD 截图提取可编辑文本（GLM 多模态）。"""
-    from server.llm import llm, sniff_image_mime
-
-    declared = (file.content_type or "").split(";")[0].strip().lower()
-    raw = await file.read()
-    max_bytes = settings.jd_image_max_mb * 1024 * 1024
-    if len(raw) > max_bytes:
-        raise HTTPException(400, f"截图文件超过 {settings.jd_image_max_mb}MB，请拆成多张后重传")
-    if len(raw) < 100:
-        raise HTTPException(400, "截图无效，请重传")
-
-    mime = sniff_image_mime(raw, declared)
-    if mime == "image/heic":
-        raise HTTPException(400, "暂不支持 HEIC，请先转为 PNG/JPG 再上传")
-    if mime not in ALLOWED_JD_IMAGE_TYPES and declared not in ALLOWED_JD_IMAGE_TYPES:
-        # 剪贴板常缺 content-type；只要文件头能识别就放行
-        if mime not in {"image/png", "image/jpeg", "image/webp"}:
-            raise HTTPException(400, "仅支持 PNG / JPG / WebP 截图")
-
-    if not llm.enabled:
-        reason = (
-            "识图未启用：请在 .env 配置有效 GLM_API_KEY，并将 LLM_MODE 设为 auto 或 glm 后重启服务"
-        )
-        track_event(
-            "jd_image_extract_fail",
-            {"error": reason, "llm_mode": settings.llm_mode},
-            user_id=user["id"],
-        )
-        raise HTTPException(400, reason)
-
-    t0 = time.time()
-    try:
-        result, meta = extract_jd_from_image(raw, mime)
-    except Exception as exc:  # noqa: BLE001
-        track_event(
-            "jd_image_extract_fail",
-            {"error": str(exc)[:200]},
-            user_id=user["id"],
-        )
-        raise HTTPException(400, f"识别失败：{str(exc)[:180]}") from exc
-
-    ok = bool(result.get("ok")) and len(str(result.get("jd_text") or "").strip()) >= 20
-    track_event(
-        "jd_image_extract_done" if ok else "jd_image_extract_fail",
-        {
-            "success": ok,
-            "duration_ms": int((time.time() - t0) * 1000),
-            "llm_used": meta.get("used", False),
-            "model": meta.get("model"),
-            "reason": (meta.get("reason") or "")[:160],
-            "tiles": meta.get("tiles"),
-            "tile_results": meta.get("tile_results"),
-        },
-        user_id=user["id"],
-    )
-    if not ok:
-        raise HTTPException(
-            400,
-            result.get("notes")
-            or meta.get("reason")
-            or "识别失败，请重传更清晰的截图，或直接粘贴 JD 文本",
-        )
-
-    return {
-        "jd_text": result["jd_text"],
-        "title": result.get("title") or "",
-        "company": result.get("company") or "",
-        "location": result.get("location") or "",
-        "notes": result.get("notes") or "",
-        "llm": meta,
-    }
+    raise HTTPException(410, "为保护图片中的个人信息，云端识图已关闭。请粘贴岗位文本或使用公开招聘链接。")
 
 
 @router.post("/match/analyze-jd")
@@ -2124,9 +2020,24 @@ def analyze_jd_api(body: AnalyzeJdBody, user: dict = Depends(get_current_user)):
 @router.post("/match/research")
 def research_api(body: ResearchBody, user: dict = Depends(get_current_user)):
     started = time.time()
+    if body.match_id:
+        with get_db() as conn:
+            row = _owned_match(conn, body.match_id, user["id"])
+            if not row:
+                raise HTTPException(404, "匹配记录不存在")
+            existing = clean_cached_research((loads(row["llm_meta_json"], {}) or {}).get("research") or {})
+            if existing.get("research_version") == 5 and existing.get("status") in {"done", "demo"}:
+                return {"research": existing, "llm": {"used": False, "cached": True}}
+            job = conn.execute("SELECT company,title FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
+            body.company = job["company"] or body.company
+            body.title = job["title"]
     result, meta = research_company(
         body.company.strip(), (body.title or "").strip(), (body.industry or "").strip()
     )
+    if body.match_id:
+        with get_db() as conn:
+            conn.execute("UPDATE match_runs SET llm_meta_json=json_patch(COALESCE(llm_meta_json,'{}'),?) WHERE id=?",
+                (dumps({"research": result, "research_meta": meta}), body.match_id))
     track_event(
         "company_research_done",
         {
@@ -2175,7 +2086,6 @@ def split_jd_api(body: SplitJdBody, user: dict = Depends(get_current_user)):
                 max_tokens=3000,
                 temperature=0,
                 timeout=settings.llm_timeout_fast,
-                disable_thinking=True,
             )
             candidates = data.get("items") if isinstance(data, dict) else None
             parts = [
@@ -2197,7 +2107,7 @@ def split_jd_api(body: SplitJdBody, user: dict = Depends(get_current_user)):
     }
 
 
-def _reuse_completed_match(uid: str, resume_id: str, jd_text: str) -> dict[str, Any] | None:
+def _reuse_completed_match(uid: str, resume_id: str, jd_text: str, evidence_hash: str) -> dict[str, Any] | None:
     """Reuse a finished analysis for the same resume + JD (keeps demo presets instant)."""
     digest = text_hash(jd_text)
     with get_db() as conn:
@@ -2217,6 +2127,12 @@ def _reuse_completed_match(uid: str, resume_id: str, jd_text: str) -> dict[str, 
             return None
         out = _match_out(row)
         meta = out.get("llm_meta") or {}
+        if not isinstance(meta, dict) or meta.get("resume_evidence_hash") != evidence_hash or meta.get("privacy_version") != 1 or meta.get("jd_parse_version") != 3:
+            return None
+        if not (out.get("report") or {}).get("interview_preparation"):
+            return None
+        if (meta.get("action") or {}).get("content_version") != 4:
+            return None
         research = meta.get("research") if isinstance(meta, dict) else None
     return {
         "job_id": out["job_id"],
@@ -2254,7 +2170,8 @@ def run_match(
         if not resume or resume["status"] != "parsed":
             raise HTTPException(400, "请选择已解析的简历")
         resume_profile = loads(resume["profile_json"], {})
-    reused = _reuse_completed_match(uid, body.resume_id, body.jd_text)
+    reused = None if body.jd_profile else _reuse_completed_match(uid, body.resume_id, body.jd_text,
+                                   text_hash(dumps(resume_profile.get("resume_sections") or {})))
     if reused:
         return reused
 

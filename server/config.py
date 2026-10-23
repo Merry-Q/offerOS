@@ -9,7 +9,7 @@ def _load_dotenv() -> None:
     if not env_path.exists():
         return
     try:
-        # 去 BOM，避免首行键名变成 \ufeffGLM_API_KEY 导致读不到
+        # 去 BOM，避免首行键名变成 \ufeffDASHSCOPE_API_KEY 导致读不到
         raw = env_path.read_text(encoding="utf-8-sig")
         for line in raw.splitlines():
             line = line.strip()
@@ -36,43 +36,44 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 class Settings:
     def __init__(self) -> None:
-        self.glm_api_key = os.getenv("GLM_API_KEY", "").strip()
-        self.glm_base_url = os.getenv("GLM_BASE_URL", "https://api.z.ai/api/paas/v4").rstrip("/")
-        self.glm_model = os.getenv("GLM_MODEL", "glm-5.2")
-        # 结构化快路径：JD 解析 / 综合判分（目标 3–10s）
-        self.glm_fast_model = (
-            os.getenv("GLM_FAST_MODEL", "").strip() or "glm-4.7-flash"
-        )
-        # 行动报告：默认跟主模型；可单独换成更快模型保 SLA
-        self.glm_action_model = (
-            os.getenv("GLM_ACTION_MODEL", "").strip() or self.glm_model
-        )
-        # 截图识图用视觉模型；未配置时默认 glm-5v-turbo
-        self.glm_vision_model = (
-            os.getenv("GLM_VISION_MODEL", "").strip() or "glm-5v-turbo"
-        )
-        self.llm_mode = os.getenv("LLM_MODE", "auto").lower()
-        self.llm_disable_thinking = _env_bool("LLM_DISABLE_THINKING", default=True)
+        self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+        self.dashscope_base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
+        self.dashscope_generation_url = os.getenv("DASHSCOPE_GENERATION_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation").strip()
+        self.qwen_model = os.getenv("QWEN_MODEL", "qwen-plus").strip()
+        self.qwen_fast_model = os.getenv("QWEN_FAST_MODEL", "qwen-flash").strip()
+        self.qwen_search_model = os.getenv("QWEN_SEARCH_MODEL", "qwen-plus").strip()
+        self.qwen_action_model = os.getenv("QWEN_ACTION_MODEL", "qwen-plus").strip()
+        self.discovery_limit = min(60, max(3, int(os.getenv("DISCOVERY_LIMIT", "24"))))
+        self.discovery_search_rounds = min(6, max(1, int(os.getenv("DISCOVERY_SEARCH_ROUNDS", "6"))))
+        self.discovery_candidate_limit = min(160, max(self.discovery_limit, int(os.getenv("DISCOVERY_CANDIDATE_LIMIT", "96"))))
+        self.discovery_verify_workers = min(6, max(1, int(os.getenv("DISCOVERY_VERIFY_WORKERS", "4"))))
+        self.llm_mode = "mock" if os.getenv("LLM_MODE", "auto").lower() == "mock" else "auto"
         self.llm_timeout_fast = max(8, int(os.getenv("LLM_TIMEOUT_FAST", "12")))
         self.llm_timeout_action = max(20, int(os.getenv("LLM_TIMEOUT_ACTION", "45")))
         self.llm_timeout_default = max(15, int(os.getenv("LLM_TIMEOUT_DEFAULT", "60")))
-        self.offeros_host = os.getenv("OFFEROS_HOST", "127.0.0.1")
-        self.offeros_port = int(os.getenv("OFFEROS_PORT", "8000"))
-        self.data_dir = ROOT / "data"
-        self.upload_dir = ROOT / "data" / "uploads"
-        self.db_path = ROOT / "data" / "offeros_v2.db"
-        self.auth_secret = os.getenv("AUTH_SECRET", "offeros-dev-secret-change-me").strip()
+        raw_base = os.getenv("OFFEROS_BASE_PATH", "").strip()
+        if raw_base in {"", "/"}:
+            self.public_base_path = ""
+        else:
+            if not raw_base.startswith("/"):
+                raw_base = "/" + raw_base
+            self.public_base_path = raw_base.rstrip("/")
+        self.data_dir = Path(os.getenv("OFFEROS_DATA_DIR") or ROOT / "data")
+        self.upload_dir = self.data_dir / "uploads"
+        self.db_path = self.data_dir / "offeros_v2.db"
         self.admin_username = os.getenv("ADMIN_USERNAME", "admin").strip()
         self.admin_password = os.getenv("ADMIN_PASSWORD", "admin123").strip()
         self.environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+        if self.environment in {"production", "prod"} and (
+            len(self.admin_password) < 12 or self.admin_password == "change-me-strong-password"
+        ):
+            raise ValueError("生产环境必须配置至少12位的独立 ADMIN_PASSWORD，不能使用示例口令。")
         # Production defaults to docs off; development keeps docs on unless overridden.
         self.disable_docs = _env_bool(
             "DISABLE_DOCS",
             default=self.environment in {"production", "prod"},
         )
         self.max_upload_mb = max(1, int(os.getenv("MAX_UPLOAD_MB", "5")))
-        self.jd_image_max_mb = max(5, int(os.getenv("JD_IMAGE_MAX_MB", "30")))
-        self.jina_api_key = os.getenv("JINA_API_KEY", "").strip()
         raw_cors = os.getenv("CORS_ORIGINS", "*").strip()
         self.cors_origins = [o.strip() for o in raw_cors.split(",") if o.strip()] or ["*"]
 
@@ -82,10 +83,10 @@ class Settings:
 
     @property
     def llm_configured(self) -> bool:
-        key = self.glm_api_key.strip()
+        key = self.dashscope_api_key.strip()
         if not key:
             return False
-        placeholders = {"your_glm_api_key_here", "changeme", "sk-xxx", "replace_me"}
+        placeholders = {"your_dashscope_api_key_here", "changeme", "sk-xxx", "replace_me"}
         return key.lower() not in placeholders
 
 

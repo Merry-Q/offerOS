@@ -8,18 +8,18 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from server.agents.resume_agent import analyze_resume
-from server.llm import llm
 from server.auth import get_current_user
 from server.config import settings
 from server.db import dumps, get_db, loads, utc_now
 from server.files import extract_text_from_file
 from server.routers.analytics import track_event
 from server.sample_data import SAMPLE_RESUME_ID, is_sample_resume
+from server.resume_evidence import attach_resume_evidence
 
 router = APIRouter(tags=["resumes"])
 
 RESUME_SELECT = (
-    "id, name, file_name, file_type, status, profile_json, direction_tag, created_at, updated_at"
+    "id, name, file_name, file_type, status, raw_text, profile_json, direction_tag, created_at, updated_at"
 )
 
 
@@ -46,6 +46,8 @@ class InterviewReportBody(BaseModel):
 def _serialize(row, *, is_sample: bool = False) -> dict[str, Any]:
     d = dict(row)
     d["profile"] = loads(d.pop("profile_json", None), None)
+    if d.get("raw_text") and d["profile"]:
+        d["profile"] = attach_resume_evidence(d["profile"], d["raw_text"])
     d.pop("raw_text", None)
     d.pop("file_path", None)
     d["direction_tag"] = d.get("direction_tag") or ""
@@ -67,11 +69,25 @@ def list_resumes(user: dict = Depends(get_current_user)):
     items = [_serialize(r) for r in rows]
     if sample:
         items.append(_serialize(sample, is_sample=True))
-    return {"items": items}
+    return {"items": items, "max_upload_mb": settings.max_upload_mb}
+
+
+@router.get("/resumes/{resume_id}/source")
+def resume_source(resume_id: str, user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, file_name, raw_text FROM resumes WHERE id=? AND (user_id=? OR id=?)",
+            (resume_id, user["id"], SAMPLE_RESUME_ID),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "简历不存在")
+    return {"id": row["id"], "file_name": row["file_name"], "raw_text": row["raw_text"] or ""}
 
 
 @router.post("/resumes/upload")
 async def upload_resume(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if user["username"] == "demo":
+        raise HTTPException(409, "请先建立独立简历空间后上传")
     if not file.filename:
         raise HTTPException(400, "缺少文件名")
     suffix = Path(file.filename).suffix.lower().lstrip(".")
@@ -121,6 +137,8 @@ def parse_resume(resume_id: str, user: dict = Depends(get_current_user)):
     path = Path(row["file_path"])
     try:
         raw_text = extract_text_from_file(path, row["file_type"])
+        if not raw_text.strip():
+            raise ValueError("文件没有可提取的文字，请上传包含文本的简历")
         profile, meta = analyze_resume(raw_text, row["file_name"])
         status = "parsed"
         track_event(
@@ -200,27 +218,12 @@ def patch_resume(resume_id: str, body: PatchResumeBody, user: dict = Depends(get
 
 @router.put("/resumes/{resume_id}/profile")
 def replace_profile(resume_id: str, body: ProfileBody, user: dict = Depends(get_current_user)):
-    """保存用户确认过的画像；额外能力必须由前端标记 source=用户补充。"""
-    if is_sample_resume(resume_id):
-        raise HTTPException(400, "示例简历不可修改")
-    allowed = {
-        "summary", "knowledge_skills", "work_experience", "core_abilities",
-        "personality_traits", "suitable_roles", "strengths", "weak", "evidence",
-        "skills", "years",
-    }
-    profile = {k: v for k, v in body.profile.items() if k in allowed}
+    """Legacy endpoint: the uploaded file is now the only source of candidate facts."""
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM resumes WHERE id = ? AND user_id = ?", (resume_id, user["id"])
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "简历不存在")
-        conn.execute(
-            "UPDATE resumes SET profile_json = ?, updated_at = ? WHERE id = ?",
-            (dumps(profile), utc_now(), resume_id),
-        )
-        out = conn.execute(f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?", (resume_id,)).fetchone()
-    return _serialize(out)
+        row = conn.execute("SELECT id FROM resumes WHERE id=? AND user_id=?", (resume_id, user["id"])).fetchone()
+    if not row:
+        raise HTTPException(404, "简历不存在")
+    raise HTTPException(409, "简历档案仅依据上传文件，不支持补充简历外能力。请上传新版简历重新解析。")
 
 
 @router.post("/resumes/{resume_id}/interview-report")
@@ -229,84 +232,30 @@ def interview_report(
 ):
     with get_db() as conn:
         row = conn.execute(
-            "SELECT profile_json FROM resumes WHERE id = ? AND (user_id = ? OR id = ?)",
+            "SELECT profile_json, raw_text FROM resumes WHERE id = ? AND (user_id = ? OR id = ?)",
             (resume_id, user["id"], SAMPLE_RESUME_ID),
         ).fetchone()
     if not row:
         raise HTTPException(404, "简历不存在")
     fallback = {
-        "overall": "回答已完成，建议继续补充具体情境、个人动作与可验证结果。",
-        "scores": {"内容": 70, "结构": 65, "证据": 60, "表达": 70},
+        "overall": "回答已保存在本次页面中。为保护隐私，转写稿不发送给模型；请按结构提示自行复盘。",
+        "scores": {},
         "strengths": ["能够围绕问题作答"],
         "improvements": ["用 STAR 结构补充背景、任务、行动和结果"],
         "next_practice": ["重新回答证据最弱的一题"],
     }
-    system = """你是求职模拟面试官。依据候选人画像、题目与实时转写稿生成复盘报告。
-只输出 JSON：{"overall":"总评","scores":{"内容":0-100,"结构":0-100,"证据":0-100,"表达":0-100},
-"strengths":["..."],"improvements":["具体到某个回答"],"next_practice":["下一步练习"]}。
-不得编造转写稿中不存在的回答。"""
-    payload = {
-        "profile": loads(row["profile_json"], {}),
-        "questions": body.questions[:20],
-        "transcript": body.transcript,
-    }
-    report, meta = llm.complete_json(system, str(payload), fallback, max_tokens=1200)
-    return {"report": report if isinstance(report, dict) else fallback, "llm": meta}
+    return {"report": fallback, "llm": {"used": False, "local": True, "reason": "转写稿不出站"}}
+
 
 
 @router.post("/resumes/{resume_id}/append-story")
 def append_story(resume_id: str, body: AppendStoryBody, user: dict = Depends(get_current_user)):
-    """追加证据到 profile.evidence + raw_text，不做完整 LLM 重解析。"""
-    if is_sample_resume(resume_id):
-        raise HTTPException(400, "示例简历不可修改")
-    uid = user["id"]
-    section = body.section.strip()
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(400, "内容不能为空")
-    label = (body.source_label or section).strip()
-    bullet = f"[{label}] {text}"
-
+    """Legacy endpoint retained to explain the current resume-only policy."""
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
-            (resume_id, uid),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "简历不存在")
-        if row["status"] != "parsed":
-            raise HTTPException(400, "仅已解析简历可追加经历")
-
-        profile = loads(row["profile_json"], {}) or {}
-        evidence = list(profile.get("evidence") or [])
-        evidence.append(bullet)
-        profile["evidence"] = evidence[:40]
-
-        strengths = list(profile.get("strengths") or [])
-        note = f"{section}：{text[:80]}"
-        if note not in strengths:
-            strengths.append(note)
-            profile["strengths"] = strengths[:12]
-
-        raw = row["raw_text"] or ""
-        append_line = f"\n\n## {section}\n- {text}"
-        raw_text = (raw + append_line).strip()
-        now = utc_now()
-        conn.execute(
-            "UPDATE resumes SET profile_json = ?, raw_text = ?, updated_at = ? WHERE id = ?",
-            (dumps(profile), raw_text, now, resume_id),
-        )
-        out = conn.execute(
-            f"SELECT {RESUME_SELECT} FROM resumes WHERE id = ?",
-            (resume_id,),
-        ).fetchone()
-
-    track_event(
-        "resume_append_story",
-        {"resume_id": resume_id, "section": section},
-        user_id=uid,
-    )
-    return _serialize(out)
+        row = conn.execute("SELECT id FROM resumes WHERE id=? AND user_id=?", (resume_id, user["id"])).fetchone()
+    if not row:
+        raise HTTPException(404, "简历不存在")
+    raise HTTPException(409, "不支持追加简历外经历，请上传新版简历重新解析。")
 
 
 @router.delete("/resumes/{resume_id}")

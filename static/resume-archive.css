@@ -1,0 +1,105 @@
+.main.archive-page { width: min(1320px, 100%); }
+.archive-page .top { margin-bottom: 24px; }
+.archive-page .eyebrow { display: none; }
+.archive-page .top h1 { font-family: "Noto Sans SC", sans-serif; font-size: 28px; }
+.archive-page .sub { color: #536979; }
+.archive-upload { display: flex; align-items: center; gap: 20px; padding: 24px; background: #fff; border: 1px dashed #799b9b; border-radius: 12px; margin-bottom: 24px; }
+.archive-upload.is-over { background: #e8f5f2; border-color: #087f78; }
+.archive-upload.is-loading { background: #f0f7f6; }
+.archive-upload-icon { display: grid; place-items: center; color: #087f78; background: #e8f5f2; width: 48px; height: 48px; border-radius: 12px; flex: 0 0 auto; }
+.archive-upload-copy { flex: 1; min-width: 0; }
+.archive-upload-copy h2 { margin: 0 0 4px; font-size: 16px; }
+.archive-upload-copy p { color: #536979; font-size: 12px; margin: 0; }
+.archive-upload-status { min-height: 20px; color: #08726c; font-size: 13px; overflow-wrap: anywhere; }
+.archive-upload-status.is-error { color: #a3293d; }
+.archive-layout { display: grid; grid-template-columns: minmax(0, 1fr) 208px; align-items: start; gap: 24px; }
+.archive-main { min-width: 0; }
+.archive-document-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 0 0 16px; border-bottom: 1px solid #dbe2e7; }
+.archive-document-head h2 { margin: 0 0 6px; font-size: 20px; overflow-wrap: anywhere; }
+.archive-document-head p { margin: 0; color: #536979; font-size: 12px; overflow-wrap: anywhere; }
+.archive-status { display: inline-block; padding: 3px 9px; color: #075f59; background: #e4f2ee; border-radius: 5px; font-size: 12px; white-space: nowrap; }
+.archive-status.is-error { color: #a3293d; background: #fff0ef; }
+.archive-context { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0 8px; color: #536979; font-size: 12px; }
+.archive-provenance { color: #075f59; }
+.archive-policy { margin: 0 0 24px; font-size: 12px; color: #536979; line-height: 1.8; }
+.archive-section { background: #fff; border: 1px solid #dbe2e7; border-radius: 12px; margin-bottom: 16px; scroll-margin-top: 24px; }
+.archive-section > summary { display: flex; align-items: center; gap: 10px; padding: 18px 22px; cursor: pointer; list-style: none; }
+.archive-section > summary::-webkit-details-marker { display: none; }
+.archive-section > summary h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.archive-section-count { margin-left: auto; color: #536979; font-size: 12px; }
+.archive-section > summary svg { color: #536979; flex-shrink: 0; transition: transform 160ms ease-out; }
+.archive-section[open] > summary svg { transform: rotate(180deg); }
+.archive-section-body { padding: 0 22px 22px; }
+.archive-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.archive-fact { min-width: 0; }
+.archive-fact.is-wide { grid-column: 1 / -1; }
+.archive-field-label { color: #536979; font-size: 12px; margin-bottom: 6px; }
+.archive-value { background: #f6f8f9; border-radius: 6px; padding: 10px 12px; min-height: 44px; font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.archive-quote { margin-top: 7px; font-size: 11px; }
+.archive-quote summary { color: #08726c; cursor: pointer; width: fit-content; }
+.archive-quote summary span { color: #536979; margin-left: 6px; }
+.archive-quote blockquote { margin: 10px 0 0; padding: 10px 12px; color: #536979; background: #f0f7f6; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.archive-section-empty { margin: 0; color: #536979; font-size: 13px; }
+.archive-aside { position: sticky; top: 24px; padding: 18px; background: #eef3f4; border-radius: 12px; }
+.archive-aside h2 { font-size: 13px; margin: 0 0 14px; }
+.archive-aside-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.archive-aside-heading button { padding: 0; border: 0; color: #08726c; background: transparent; font-size: 12px; }
+.archive-library-item { display: block; width: 100%; border: 0; border-radius: 6px; padding: 11px; background: transparent; text-align: left; margin-bottom: 6px; color: #14283a; }
+.archive-library-item span { display: block; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.archive-library-item small { display: block; font-size: 11px; color: #536979; margin-top: 3px; }
+.archive-library-item:hover { background: #e1eae9; }
+.archive-library-item.is-selected { background: #d5eae5; }
+.archive-library-item.is-selected span { color: #064f4b; }
+.archive-outline { margin-top: 24px; padding-top: 20px; border-top: 1px solid #cbd8dc; }
+#archiveOutline { display: grid; gap: 3px; }
+#archiveOutline a { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px; font-size: 12px; color: #536979; text-decoration: none; border-radius: 5px; }
+#archiveOutline a:hover, #archiveOutline a.is-active { background: #dfecea; color: #075f59; }
+#archiveOutline a span { font-variant-numeric: tabular-nums; font-size: 11px; }
+.archive-aside-note { font-size: 11px; color: #536979; line-height: 1.8; margin: 18px 0 0; }
+.archive-original { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 20px 0; border-top: 1px solid #dbe2e7; scroll-margin-top: 24px; }
+.archive-original h3 { font-size: 15px; margin: 0; }
+.archive-original p, .archive-actions p, .archive-practice p { margin: 4px 0 0; color: #536979; font-size: 12px; }
+#archiveSourceText { flex-basis: 100%; max-height: 480px; overflow: auto; padding: 18px; background: #fff; border: 1px solid #dbe2e7; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.9 "Noto Sans SC", sans-serif; margin: 6px 0 0; }
+.archive-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 20px; background: #e4f2ee; border-radius: 12px; margin: 8px 0 24px; }
+.archive-actions strong { font-size: 14px; }
+.archive-practice { border-top: 1px solid #dbe2e7; padding-top: 16px; }
+.archive-practice summary { font-size: 13px; cursor: pointer; color: #08726c; }
+.archive-practice button { margin-top: 12px; }
+.archive-empty { padding: 40px 0; }
+.archive-empty h3 { font-size: 18px; }
+.archive-empty p, .archive-muted { color: #536979; font-size: 13px; }
+.archive-error { padding: 16px; background: #fff1ef; border: 1px solid #e5c4c4; border-radius: 8px; margin: 16px 0; }
+.archive-error p { font-size: 13px; }
+.archive-page ::selection { color: #064f4b; background: #c6e8df; }
+.archive-page button:hover:not(:disabled) { filter: brightness(.96); }
+.archive-page :focus-visible { outline: 3px solid #087f78; outline-offset: 3px; }
+.archive-page input, .archive-page textarea { caret-color: #087f78; }
+@media (max-width: 1160px) {
+  .archive-layout { grid-template-columns: minmax(0, 1fr) 176px; gap: 18px; }
+  .archive-aside { padding: 14px; }
+  .main.archive-page { padding-left: 28px; padding-right: 28px; }
+}
+@media (max-width: 980px) {
+  .archive-layout { display: flex; flex-direction: column; }
+  .archive-main { width: 100%; }
+  .archive-aside { position: static; width: 100%; order: -1; }
+  #resumeLibrary { display: flex; gap: 8px; overflow-x: auto; }
+  .archive-library-item { flex: 0 0 190px; margin: 0; }
+  .archive-outline { margin-top: 14px; padding-top: 12px; }
+  .archive-outline h2, .archive-aside-note { display: none; }
+  #archiveOutline { display: flex; overflow-x: auto; }
+  #archiveOutline a { white-space: nowrap; gap: 10px; }
+}
+@media (max-width: 760px) {
+  .main.archive-page { padding: 22px 15px 48px; }
+  .archive-upload { flex-wrap: wrap; padding: 18px; gap: 14px; }
+  .archive-upload-icon { display: none; }
+  .archive-upload-copy { flex-basis: 100%; }
+  .archive-fields { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .archive-section > summary { padding: 16px; }
+  .archive-section-body { padding: 0 16px 18px; }
+  .archive-document-head h2 { font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .archive-section > summary svg { transition: none; }
+}

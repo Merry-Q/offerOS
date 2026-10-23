@@ -22,6 +22,7 @@ SYSTEM = """你是 Match Judge Agent，唯一有权评分。根据 JD 档案、�
 - 硬门槛不修改分数和档位。即使存在阻塞，也按加权原分给出保/稳/冲/不建议投，并单独警示。
 - gaps 2-4 条即可，点出关键风险。
 - 不要编造简历没有的证据。
+- 只评估当前简历；候选人仅提供本地从简历提取的固定职业标签；不提供原文或身份信息。未写出的能力或资格按不具备处理，不推断隐藏能力，不要求用户补充简历外经历。
 只输出 JSON。"""
 
 
@@ -49,18 +50,8 @@ def decide_level(score: int, *_args) -> str:
 
 
 def _compact_resume(profile: dict) -> dict[str, Any]:
-    return {
-        "summary": (profile.get("summary") or "")[:400],
-        "strengths": (profile.get("strengths") or [])[:5],
-        "weak": (profile.get("weak") or [])[:5],
-        "evidence": [str(x)[:160] for x in (profile.get("evidence") or [])[:6]],
-        "skills": (profile.get("skills") or [])[:12],
-        "years": profile.get("years"),
-        "knowledge_skills": (profile.get("knowledge_skills") or [])[:12],
-        "work_experience": (profile.get("work_experience") or [])[:10],
-        "core_abilities": (profile.get("core_abilities") or [])[:10],
-        "personality_traits": (profile.get("personality_traits") or [])[:10],
-    }
+    from server.privacy import model_signals
+    return model_signals(profile)
 
 
 def _compact_jd(profile: dict) -> dict[str, Any]:
@@ -77,28 +68,21 @@ def _compact_jd(profile: dict) -> dict[str, Any]:
 
 
 def mock_judge(jd_profile: dict, resume_profile: dict) -> dict[str, Any]:
-    evidence = resume_profile.get("evidence") or []
-    weak = resume_profile.get("weak") or []
-    dims = {
-        "knowledge_skills": 76 if evidence else 60,
-        "work_experience": 74 if len(evidence) >= 2 else 58,
-        "core_abilities": 72 if evidence else 60,
-        "personality_traits": 68,
-    }
-    threshold = 82 if jd_profile.get("must_haves") else 70
-    gaps = [{"severity": "important", "text": w} for w in weak[:2]] or [
-        {"severity": "fixable", "text": "部分要求需补量化 STAR"}
-    ]
-    strengths = (resume_profile.get("strengths") or [])[:3] or ["具备可匹配的基础证据"]
-    return {
-        "dims": dims,
-        "threshold": threshold,
-        "hard_gate_warnings": [],
-        "strengths": strengths,
-        "gaps": gaps,
-        "one_liner": "核心任务大体可覆盖，部分证明链偏弱；建议投递并优先改简历叙事。",
-        "level_hint": "稳",
-    }
+    from server.job_discovery import quick_score
+    from server.privacy import local_signals
+    signals = local_signals(resume_profile)
+    text = "\n".join(str(x) for key in ("must_haves", "core_requirements", "nice_to_haves") for x in jd_profile.get(key, []))
+    quick = quick_score({"title": jd_profile.get("title", ""), "jd_text": text, "graduate_cohort": "未注明"}, resume_profile)
+    required = quick["score_basis"]["required_tags"]
+    coverage = round(100 * len(quick["matched_tags"]) / len(required)) if required else 0
+    dims = {"knowledge_skills": coverage, "work_experience": 0 if quick["gate_warnings"] or not signals["experience_months"] else 60,
+            "core_abilities": coverage, "personality_traits": 0}
+    return {"dims": dims, "threshold": 70,
+        "hard_gate_warnings": [{"gate": "本地识别门槛", "requirement": text, "candidate": "简历未达到", "blocked": True} for text in quick["gate_warnings"]],
+        "strengths": quick["matched_tags"],
+        "gaps": [{"severity": "important", "text": "简历未具备：" + tag} for tag in quick["missing_tags"]] or [{"severity": "fixable", "text": "未识别的岗位要求仍需逐条审阅"}],
+        "one_liner": "当前为本地规则判断，仅覆盖已识别职业标签与门槛；未写出的能力按未具备处理。", "level_hint": "不建议投"}
+
 
 
 def judge_match(jd_profile: dict, resume_profile: dict) -> tuple[dict[str, Any], dict]:
@@ -117,7 +101,6 @@ def judge_match(jd_profile: dict, resume_profile: dict) -> tuple[dict[str, Any],
         max_tokens=900,
         temperature=0.1,
         timeout=settings.llm_timeout_fast,
-        disable_thinking=True,
     )
     if not isinstance(data, dict):
         data = fallback
@@ -127,6 +110,8 @@ def judge_match(jd_profile: dict, resume_profile: dict) -> tuple[dict[str, Any],
         key: _clamp(dims_in.get(key, fallback["dims"][key]))
         for key in ("knowledge_skills", "work_experience", "core_abilities", "personality_traits")
     }
+    # Only coarse professional tags leave locally; they provide no personality evidence.
+    dims["personality_traits"] = 0
     threshold = _clamp(data.get("threshold", fallback["threshold"]))
     raw = int(
         round(

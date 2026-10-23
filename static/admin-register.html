@@ -49,7 +49,7 @@ document.getElementById("form").onsubmit = async (e) => {
       return d;
     });
     setAuth(data.token, data.user);
-    location.href = "/admin";
+    location.href = offerosUrl("/admin");
   } catch (err) {
     msg.textContent = err.message;
   }

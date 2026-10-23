@@ -58,6 +58,22 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS job_discovery_runs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                resume_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                filters_json TEXT NOT NULL,
+                signals_json TEXT NOT NULL,
+                items_json TEXT NOT NULL DEFAULT '[]',
+                errors_json TEXT NOT NULL DEFAULT '[]',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_discovery_owner ON job_discovery_runs(user_id, created_at);
+
             CREATE TABLE IF NOT EXISTS resumes (
                 id TEXT PRIMARY KEY,
                 user_id TEXT,
@@ -243,6 +259,7 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "match_batches", "request_key", "TEXT")
+        _ensure_column(conn, "job_discovery_runs", "stats_json", "TEXT NOT NULL DEFAULT '{}'")
         # 历史行：已有报告视为双完成；有判分无报告视为报告待补
         conn.execute(
             """
@@ -292,12 +309,6 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, col_type: 
     cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-
-
-def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    return dict(row)
 
 
 def loads(value: str | None, default: Any = None) -> Any:

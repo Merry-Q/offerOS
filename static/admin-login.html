@@ -53,7 +53,7 @@ document.getElementById("form").onsubmit = async (e) => {
     });
     if (data.user.role !== "admin") throw new Error("该账号不是管理员");
     setAuth(data.token, data.user);
-    location.href = "/admin";
+    location.href = offerosUrl("/admin");
   } catch (err) {
     msg.textContent = err.message;
   }

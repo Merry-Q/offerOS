@@ -632,7 +632,7 @@ async function load() {
   });
   if (res.status === 401 || res.status === 403) {
     clearAuth();
-    location.href = "/admin/login";
+    location.href = offerosUrl("/admin/login");
     return;
   }
   if (!res.ok) {

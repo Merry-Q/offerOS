@@ -115,17 +115,6 @@ def get_current_user(
     return user
 
 
-def get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-    authorization: str | None = Header(default=None),
-    x_auth_token: str | None = Header(default=None, alias="X-Auth-Token"),
-) -> dict[str, Any] | None:
-    token = _extract_token(credentials, authorization, x_auth_token)
-    if not token:
-        return None
-    return get_user_by_token(token)
-
-
 def require_admin(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     if user.get("role") != "admin":
         raise HTTPException(403, "需要管理员权限")

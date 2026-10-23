@@ -12,56 +12,8 @@ DEMO_PASSWORD = "Demo@OfferOS2026"
 DEMO_USER_ID = "user_demo"
 DEMO_RESUME_ID = "cv_demo_linzhixia"
 
-PROFILE: dict[str, Any] = {
-    "summary": "虚构人物林知夏：4 年 ToB SaaS 产品经验，擅长用户研究、流程产品设计与跨团队交付。",
-    "knowledge_skills": [
-        {"name": "用户研究", "evidence": "独立完成 32 场客户访谈并形成机会地图", "source": "简历"},
-        {"name": "产品分析与设计", "evidence": "使用漏斗分析、流程建模和原型验证推进方案", "source": "简历"},
-        {"name": "数据分析", "evidence": "围绕激活率、工单自助解决率建立指标看板", "source": "简历"},
-        {"name": "PRD 与评审", "evidence": "把机会树拆成可排期的需求包，组织研发/设计双周评审", "source": "简历"},
-    ],
-    "work_experience": [
-        {"name": "云帆协作科技（虚构）· 产品经理", "evidence": "2022.07—2026.06，负责企业客户门户与工单产品", "source": "简历"},
-        {"name": "客户门户 2.0", "evidence": "主导从调研、方案评审到灰度上线的完整闭环", "source": "简历"},
-        {"name": "工单自助分流", "evidence": "把高频问题做成门户解决方案，人工工单下降 19%", "source": "简历"},
-    ],
-    "core_abilities": [
-        {"name": "需求洞察", "evidence": "从访谈与行为数据识别高频自助服务机会", "source": "简历"},
-        {"name": "跨团队推动", "evidence": "协调研发、设计、客户成功和销售完成分阶段交付", "source": "简历"},
-        {"name": "结果导向", "evidence": "上线后客户门户激活率提升 16%，人工工单量下降 19%", "source": "简历"},
-    ],
-    "personality_traits": [
-        {"name": "结构化", "evidence": "将分散需求整理为机会树与优先级规则", "source": "AI推断"},
-        {"name": "协作耐心", "evidence": "通过双周共识会处理销售与研发目标冲突", "source": "AI推断"},
-    ],
-    "suitable_roles": [
-        {"role": "ToB SaaS 产品经理", "industries": ["企业服务", "协同办公"], "reason": "已有完整的客户门户和工单产品证据链"},
-        {"role": "客户体验产品经理", "industries": ["云服务", "软件服务"], "reason": "用户研究和服务流程优化能力较强"},
-        {"role": "流程产品经理", "industries": ["企业服务"], "reason": "擅长把服务流程做成可度量的产品模块"},
-    ],
-    "strengths": ["用户洞察与数据验证结合", "能独立推进复杂协作项目", "结果表达可量化"],
-    "weak": ["没有消费互联网增长经验", "英文跨国协作证据较少"],
-    "evidence": [
-        "客户门户激活率提升 16%，人工工单量下降 19%",
-        "32 场客户访谈形成机会地图",
-        "交付周期由平均 7 周缩短至 5 周",
-    ],
-    "skills": ["用户研究", "PRD", "数据分析", "流程设计", "原型设计"],
-    "years": "4 年",
-}
+from server.demo_resume import DEMO_RESUME_TEXT as RAW_RESUME, DEMO_RESUME_PROFILE as PROFILE
 
-RAW_RESUME = """林知夏（虚构人物） | ToB SaaS 产品经理
-所有公司、项目与数字均为 OfferOS Demo 构造内容，不对应任何真实个人。
-
-工作经历
-云帆协作科技（虚构），产品经理，2022.07—2026.06
-- 负责企业客户门户与工单产品，完成 32 场客户访谈并建立机会地图。
-- 主导客户门户 2.0，协调研发、设计、客户成功与销售分阶段上线。
-- 上线后激活率提升 16%，人工工单量下降 19%，交付周期由 7 周缩短到 5 周。
-
-教育经历
-南川大学（虚构），信息管理与信息系统，本科，2018—2022
-"""
 
 SAMPLE_ANSWER = (
     "情境：客户门户 2.0 上线前，人工工单持续上涨，销售和研发对优先级争执很大。"
@@ -621,6 +573,12 @@ def seed_demo_library(*, reset: bool = True) -> dict[str, Any]:
                 now,
                 now,
             ),
+        )
+        # Upgrade only system-created fictional copies, never uploaded resumes.
+        conn.execute(
+            "UPDATE resumes SET raw_text=?,profile_json=?,updated_at=? WHERE id LIKE 'cv_demo_%' "
+            "AND id!=? AND file_name='demo-lin-zhixia.docx' AND raw_text LIKE '林知夏（虚构人物） | ToB SaaS 产品经理%'",
+            (RAW_RESUME, dumps(PROFILE), now, DEMO_RESUME_ID),
         )
         for job in DEMO_JOBS:
             conn.execute(

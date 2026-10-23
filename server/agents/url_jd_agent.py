@@ -1,20 +1,13 @@
 """从用户提交的岗位网页链接抽取 JD 信息（导入-only，非全站爬岗）。"""
 from __future__ import annotations
 
-import gzip
 import html
 import ipaddress
 import json
 import re
-import shutil
 import socket
-import ssl
-import subprocess
-import urllib.error
-import urllib.request
-import zlib
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from server.config import settings
 from server.llm import llm
@@ -114,32 +107,6 @@ def _assert_public_url(url: str) -> None:
             raise ValueError("不允许访问本机、内网或保留地址")
 
 
-def _decode_http_body(raw_bytes: bytes, content_encoding: str, content_type: str) -> str:
-    enc = (content_encoding or "").lower()
-    data = raw_bytes
-    try:
-        if "gzip" in enc:
-            data = gzip.decompress(raw_bytes)
-        elif "deflate" in enc:
-            data = zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
-    except Exception:
-        data = raw_bytes
-
-    charset = "utf-8"
-    ctype = (content_type or "").lower()
-    if "charset=" in ctype:
-        charset = ctype.split("charset=", 1)[1].split(";")[0].strip().strip('"') or "utf-8"
-    # HTML meta charset
-    head = data[:4096].decode("utf-8", errors="ignore")
-    m = re.search(r'charset=["\']?([\w\-]+)', head, re.I)
-    if m:
-        charset = m.group(1)
-    try:
-        return data.decode(charset, errors="replace")
-    except LookupError:
-        return data.decode("utf-8", errors="replace")
-
-
 def _strip_html(raw: str) -> str:
     text = raw
     text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", text)
@@ -170,11 +137,6 @@ def _strip_html(raw: str) -> str:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            types = item.get("@type") or ""
-            type_s = " ".join(types) if isinstance(types, list) else str(types)
-            if "JobPosting" not in type_s and "job" not in type_s.lower():
-                # still keep title/description if present
-                pass
             title = item.get("title") or item.get("name") or ""
             desc = item.get("description") or ""
             org = item.get("hiringOrganization") or {}
@@ -232,239 +194,14 @@ def _looks_like_anti_bot(text: str) -> bool:
     return False
 
 
-def _looks_like_thin_spa(text: str, raw_html: str = "") -> bool:
-    """前端渲染壳 / 空页面：几乎无正文。不强制要求中文。"""
-    t = re.sub(r"\s+", "", text or "")
-    if len(t) < 60:
-        return True
-    if raw_html and len(raw_html) > 8000 and len(t) < 120:
-        return True
-    if len(t) < 120 and not re.search(
-        r"职责|要求|任职|岗位|Job|Responsib|Qualif|Require|经验|学历",
-        text or "",
-        re.I,
-    ):
-        return True
-    return False
-
-
-def _fetch_via_urllib(url: str, timeout: float) -> tuple[str, dict[str, Any]]:
-    ctx = ssl.create_default_context()
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Connection": "close",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        raw_bytes = resp.read()
-        ctype = resp.headers.get("Content-Type") or ""
-        cenc = resp.headers.get("Content-Encoding") or ""
-        raw = _decode_http_body(raw_bytes, cenc, ctype)
-        host = urlparse(url).netloc.lower()
-        return raw, {
-            "host": host,
-            "bytes": len(raw_bytes),
-            "content_type": ctype,
-            "via": "urllib",
-            "status": getattr(resp, "status", 200),
-        }
-
-
-def _fetch_via_curl(url: str, timeout: float) -> tuple[str, dict[str, Any]]:
-    curl = shutil.which("curl") or shutil.which("curl.exe")
-    if not curl:
-        raise RuntimeError("本机未找到 curl")
-    cmd = [
-        curl,
-        "-sL",
-        "--max-time",
-        str(max(5, int(timeout))),
-        "-A",
-        USER_AGENT,
-        "-H",
-        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "-H",
-        "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
-        "--compressed",
-        "-w",
-        "\n__HTTP_STATUS__:%{http_code}",
-        url,
-    ]
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        timeout=timeout + 5,
-        check=False,
-    )
-    if proc.returncode not in (0,):
-        err = (proc.stderr or b"").decode("utf-8", errors="replace")[:160]
-        raise RuntimeError(f"curl 失败 code={proc.returncode} {err}".strip())
-    out = (proc.stdout or b"").decode("utf-8", errors="replace")
-    status = "0"
-    if "__HTTP_STATUS__:" in out:
-        body, _, tail = out.rpartition("__HTTP_STATUS__:")
-        status = (tail or "").strip().splitlines()[0].strip() or "0"
-        raw = body
-    else:
-        raw = out
-    if status and not status.startswith("2"):
-        raise RuntimeError(f"页面返回 HTTP {status}，可能需要登录或不可抓取")
-    host = urlparse(url).netloc.lower()
-    return raw, {
-        "host": host,
-        "bytes": len(raw.encode("utf-8", errors="ignore")),
-        "content_type": "text/html",
-        "via": "curl",
-        "status": int(status) if status.isdigit() else 0,
-    }
-
-
-def _fetch_via_jina(url: str, timeout: float) -> tuple[str, dict[str, Any]]:
-    """可选：Jina Reader 把页面转成可读文本（需网络可达；可配 JINA_API_KEY）。"""
-    reader = "https://r.jina.ai/" + quote(url, safe=":/%?#[]@!$&'()*+,;=")
-    key = (settings.jina_api_key or "").strip()
-    # Prefer curl for jina as well
-    curl = shutil.which("curl") or shutil.which("curl.exe")
-    if curl:
-        cmd = [
-            curl,
-            "-sL",
-            "--max-time",
-            str(max(5, int(timeout))),
-            "-A",
-            USER_AGENT,
-            "-H",
-            "Accept: text/plain,text/markdown,*/*",
-            "-H",
-            "X-Return-Format: markdown",
-        ]
-        if key:
-            cmd.extend(["-H", f"Authorization: Bearer {key}"])
-        cmd.append(reader)
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout + 5, check=False)
-        if proc.returncode == 0 and proc.stdout:
-            raw = proc.stdout.decode("utf-8", errors="replace")
-            if "Unauthorized" in raw[:200] or raw.strip().startswith("{"):
-                raise RuntimeError("jina 未授权或返回异常")
-            return raw, {
-                "host": urlparse(url).netloc.lower(),
-                "bytes": len(proc.stdout),
-                "via": "jina+curl",
-                "reader": True,
-                "status": 200,
-            }
-        raise RuntimeError(f"jina curl 失败 code={proc.returncode}")
-
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/plain,text/markdown,*/*",
-        "X-Return-Format": "markdown",
-    }
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    req = urllib.request.Request(reader, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as resp:
-        raw_bytes = resp.read()
-        raw = raw_bytes.decode("utf-8", errors="replace")
-        return raw, {
-            "host": urlparse(url).netloc.lower(),
-            "bytes": len(raw_bytes),
-            "via": "jina+urllib",
-            "reader": True,
-            "status": getattr(resp, "status", 200),
-        }
-
-
-def fetch_page_text(url: str, timeout: float = 15.0) -> tuple[str, dict[str, Any]]:
-    """拉取页面原文（HTML 或 reader 文本）。多策略：urllib → curl → jina。"""
-    errors: list[str] = []
-    raw_html = ""
-    meta: dict[str, Any] = {}
-
-    for name, fn in (
-        ("urllib", _fetch_via_urllib),
-        ("curl", _fetch_via_curl),
-    ):
-        try:
-            raw_html, meta = fn(url, timeout)
-            if raw_html and len(raw_html.strip()) >= 40:
-                break
-            errors.append(f"{name}: 内容过短")
-            raw_html = ""
-        except urllib.error.HTTPError as e:
-            errors.append(f"{name}: HTTP {e.code}")
-            raw_html = ""
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{name}: {exc}")
-            raw_html = ""
-
-    text = _strip_html(raw_html) if raw_html else ""
-    anti = bool(raw_html) and (_looks_like_anti_bot(text) or _looks_like_anti_bot(raw_html))
-    thin = bool(raw_html) and _looks_like_thin_spa(text, raw_html)
-    compact_len = len(re.sub(r"\s+", "", text or ""))
-    usable = compact_len >= 80 and not anti
-
-    # 直连完全失败、反爬、SPA 空壳或正文过短时都尝试 reader。
-    # 旧逻辑在 raw_html 为空时反而跳过 Jina，导致最需要降级的链接直接失败。
-    need_reader = (not raw_html) or anti or thin or compact_len < 60
-    if need_reader:
-        try:
-            reader_raw, reader_meta = _fetch_via_jina(url, min(max(timeout, 10), 20))
-            reader_text = reader_raw.strip()
-            if "<html" in reader_text[:200].lower():
-                reader_text = _strip_html(reader_text)
-            if (
-                reader_text
-                and len(re.sub(r"\s+", "", reader_text)) >= 80
-                and not _looks_like_anti_bot(reader_text)
-            ):
-                return reader_text, {
-                    **reader_meta,
-                    "fallback_from": meta.get("via"),
-                    "errors": errors,
-                }
-            errors.append("jina: 仍无有效正文")
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"jina: {exc}")
-
-    if not raw_html and not text:
-        raise RuntimeError(
-            "无法访问该链接（"
-            + "；".join(errors[:3])
-            + "）。可检查网络，或改为粘贴 JD 文本/截图。"
-        )
-
-    # 反爬且无可用正文
-    if anti and compact_len < 60:
-        raise RuntimeError(
-            "目标站触发了安全验证/反爬，无法自动提取。"
-            "请改用「批量粘贴」或截图 OCR，并保留该链接作为投递跳转。"
-        )
-
-    # 已有一定可读文本则放行（含英文页），交给后续 LLM/规则抽取
-    if compact_len >= 40:
-        host = urlparse(url).netloc.lower()
-        return text, {
-            **meta,
-            "host": host,
-            "errors": errors,
-            "text_len": len(text),
-            "thin": thin,
-            "usable": usable,
-        }
-
-    raise RuntimeError(
-        "页面几乎没有岗位正文（可能是前端渲染页或需登录）。"
-        "请打开链接复制 JD 到「批量粘贴」，链接仍可作投递地址。"
-    )
+def fetch_page_text(url: str) -> tuple[str, dict[str, Any]]:
+    """Anonymous public fetch, with redirect/DNS/size checks shared with discovery."""
+    from server.public_fetch import fetch_public_page
+    raw, final_url = fetch_public_page(url)
+    text = _strip_html(raw)
+    if len(re.sub(r"\s+", "", text)) < 80 or _looks_like_anti_bot(text):
+        raise ValueError("招聘页面正文不足或需要访问验证，请粘贴公开JD文本。")
+    return text, {"host": urlparse(final_url).netloc.lower(), "via": "public-ip-pinned", "final_url": final_url, "text_len": len(text)}
 
 
 def _heuristic_extract(page_text: str, url: str) -> dict[str, Any]:
@@ -568,7 +305,6 @@ def extract_jd_from_url(url: str) -> tuple[dict[str, Any], dict]:
         max_tokens=900,
         temperature=0.1,
         timeout=settings.llm_timeout_fast,
-        disable_thinking=True,
     )
     if not isinstance(data, dict):
         data = fallback
@@ -596,22 +332,3 @@ def extract_jd_from_url(url: str) -> tuple[dict[str, Any], dict]:
     }
     meta = {**meta, "host": host, "site_boost": site_boost, "fetch": fetch_meta}
     return result, meta
-
-
-def split_batch_jd_text(raw: str) -> list[str]:
-    """按 --- 或连续空行拆分多段 JD。"""
-    text = (raw or "").replace("\r\n", "\n").strip()
-    if not text:
-        return []
-    if "\n---" in text or text.startswith("---"):
-        parts = re.split(r"\n\s*---\s*\n", text)
-    else:
-        parts = re.split(r"\n\s*\n\s*\n+", text)
-    out = []
-    for p in parts:
-        p = p.strip()
-        if len(p) >= 20:
-            out.append(p)
-    if not out and len(text) >= 20:
-        out = [text]
-    return out[:20]

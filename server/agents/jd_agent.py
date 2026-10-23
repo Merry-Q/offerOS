@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from server.config import settings
-from server.llm import llm, split_image_for_ocr
+from server.llm import llm
 
 
 SYSTEM = """你是 JD Analyst Agent。分析岗位 JD，输出 JSON：
@@ -30,6 +30,7 @@ SYSTEM = """你是 JD Analyst Agent。分析岗位 JD，输出 JSON：
 - company/location/employment_type 只依据 JD 可见信息，不要编造。
 - employment_type：出现实习/intern→实习；兼职/part-time→兼职；校招/应届→校园招聘；否则倾向全职；实在看不出→未知。
 - 不要编造 JD 未写的硬性门槛。
+- core_requirements仅列必须胜任的核心职责与能力；nice_to_haves单列明确写有优先、加分、preferred等非必需条件，不能混入核心能力或重复列出。
 只输出 JSON。"""
 
 
@@ -91,9 +92,9 @@ def mock_jd_profile(jd_text: str) -> dict[str, Any]:
             "experience": {"requirement": "", "strictness": "未要求"},
             "language": {"requirement": "", "strictness": "未要求"},
         },
-        "must_haves": bullets[:2] or ["具备相关岗位经验"],
-        "core_requirements": bullets[2:5] or ["能独立推进核心任务"],
-        "nice_to_haves": bullets[5:7],
+        "must_haves": [line for line in lines if re.search(r"必须|硬性要求", line)][:6],
+        "core_requirements": [line for line in bullets if "优先" not in line][:6],
+        "nice_to_haves": [line for line in lines if "优先" in line][:4],
         "risks": ["JD 表述可能偏理想化，需用证据核验「独立负责」类要求"],
         "summary": f"{title} · 规则拆解岗位档案",
     }
@@ -118,16 +119,15 @@ def _normalize_employment_type(value: Any, jd_text: str = "") -> str:
 
 def analyze_jd(jd_text: str) -> tuple[dict[str, Any], dict]:
     fallback = mock_jd_profile(jd_text)
-    # 快模型 + 截断输入 + 限输出：目标 3–5s
+    # Read the same bounded complete JD as the verified discovery item.
     data, meta = llm.complete_json(
         SYSTEM,
-        f"JD 文本：\n{(jd_text or '')[:5000]}",
+        f"JD 文本：\n{(jd_text or '')[:16000]}",
         fallback,
         model=llm.fast_model,
-        max_tokens=800,
+        max_tokens=3200,
         temperature=0.1,
-        timeout=settings.llm_timeout_fast,
-        disable_thinking=True,
+        timeout=max(25, settings.llm_timeout_fast),
     )
     if not isinstance(data, dict):
         return fallback, meta
@@ -158,111 +158,3 @@ def job_tags_from_profile(profile: dict | None, jd_text: str = "") -> dict[str, 
         "employment_type": _normalize_employment_type(p.get("employment_type"), jd_text),
         "level": (p.get("level") or "").strip()[:40] or "未知",
     }
-
-
-EXTRACT_SYSTEM = """你是招聘信息提取助手。用户会提供一张岗位 JD 截图（可能来自 Boss/拉勾/猎聘/公司官网）。
-请尽量完整识别图中可见文字，整理为可编辑的岗位描述，并只输出 JSON：
-{
-  "jd_text": "完整 JD 文本：含岗位名、公司、地点、薪资（若有）、职责、要求、加分项；用换行分段",
-  "title": "岗位标题（若能识别，否则空字符串）",
-  "company": "公司名（若能识别，否则空字符串）",
-  "location": "城市/地区（若能识别，否则空字符串）",
-  "ok": true,
-  "notes": "一句说明：清晰度/是否截断/遮挡"
-}
-规则：
-- 只提取图中可见内容，不要编造；看不清的字用…占位。
-- 优先保证 jd_text 完整可用（至少包含职责或要求之一）。
-- 若几乎无法识别岗位信息，ok=false，jd_text 可空，notes 说明原因。
-- 只输出 JSON。"""
-
-
-def extract_jd_from_image(image_bytes: bytes, mime: str) -> tuple[dict[str, Any], dict]:
-    fallback = {
-        "jd_text": "",
-        "title": "",
-        "company": "",
-        "location": "",
-        "ok": False,
-        "notes": "未能识别截图中的岗位信息，请重传更清晰的截图",
-    }
-    tiles = split_image_for_ocr(image_bytes, mime)
-    parts: list[dict[str, Any]] = []
-    metas: list[dict[str, Any]] = []
-    for index, (tile_bytes, tile_mime) in enumerate(tiles):
-        data_part, meta_part = llm.complete_json_vision(
-            EXTRACT_SYSTEM,
-            (
-                f"这是同一份 JD 长截图的第 {index + 1}/{len(tiles)} 片。"
-                "请提取本片所有可见文字，保留职责与任职要求原文结构；不要因为缺少标题而判失败。"
-            ),
-            tile_bytes,
-            tile_mime,
-            fallback,
-            max_tokens=2500,
-            timeout=max(settings.llm_timeout_default, 90),
-        )
-        metas.append(meta_part)
-        if isinstance(data_part, dict) and str(data_part.get("jd_text") or "").strip():
-            parts.append(data_part)
-    if parts:
-        seen_lines: set[str] = set()
-        merged_lines: list[str] = []
-        for part in parts:
-            for line in str(part.get("jd_text") or "").replace("\\n", "\n").splitlines():
-                clean = line.strip()
-                key = re.sub(r"\s+", "", clean)
-                if not clean or key in seen_lines:
-                    continue
-                seen_lines.add(key)
-                merged_lines.append(clean)
-        first = parts[0]
-        data = {
-            "ok": True,
-            "jd_text": "\n".join(merged_lines),
-            "title": next((str(x.get("title") or "").strip() for x in parts if x.get("title")), ""),
-            "company": next((str(x.get("company") or "").strip() for x in parts if x.get("company")), ""),
-            "location": next((str(x.get("location") or "").strip() for x in parts if x.get("location")), ""),
-            "notes": f"已按原始清晰度识别并合并 {len(tiles)} 个分片"
-            if len(tiles) > 1
-            else str(first.get("notes") or ""),
-        }
-    else:
-        data = fallback
-    used_meta = next((x for x in metas if x.get("used")), metas[0] if metas else {})
-    meta = {
-        **used_meta,
-        "tiles": len(tiles),
-        "tile_results": [
-            {
-                "used": bool(x.get("used")),
-                "model": x.get("model"),
-                "reason": x.get("reason"),
-                "parse_degraded": bool(x.get("parse_degraded")),
-            }
-            for x in metas
-        ],
-    }
-    if not isinstance(data, dict):
-        notes = meta.get("reason") or fallback["notes"]
-        return {**fallback, "notes": notes}, meta
-
-    jd_text = str(data.get("jd_text") or "").strip()
-    # 有些模型把换行写成字面 \\n
-    if "\\n" in jd_text and "\n" not in jd_text:
-        jd_text = jd_text.replace("\\n", "\n")
-    ok = bool(data.get("ok", True)) and len(jd_text) >= 20
-    result = {
-        "jd_text": jd_text,
-        "title": str(data.get("title") or "").strip(),
-        "company": str(data.get("company") or "").strip(),
-        "location": str(data.get("location") or "").strip(),
-        "ok": ok,
-        "notes": str(data.get("notes") or "").strip(),
-    }
-    if not meta.get("used") and meta.get("reason"):
-        result["ok"] = False
-        result["notes"] = str(meta["reason"])
-    elif not ok and not result["notes"]:
-        result["notes"] = "识别结果过短或无效，请重传截图或改为粘贴文本"
-    return result, meta

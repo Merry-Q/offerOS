@@ -2,6 +2,37 @@
 const AUTH_TOKEN_KEY = "offeros.auth.token";
 const AUTH_USER_KEY = "offeros.auth.user";
 
+function offerosBase() {
+  const raw = typeof window !== "undefined" && window.OFFEROS_BASE != null
+    ? String(window.OFFEROS_BASE)
+    : "";
+  return raw.replace(/\/$/, "");
+}
+
+function offerosUrl(path) {
+  const base = offerosBase();
+  if (!path) return base || "/";
+  if (/^https?:\/\//i.test(path)) return path;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  if (base && (p === base || p.startsWith(`${base}/`))) return p;
+  return `${base}${p}`;
+}
+
+function offerosPathname() {
+  const base = offerosBase();
+  let p = location.pathname;
+  if (base && (p === base || p.startsWith(`${base}/`))) {
+    p = p.slice(base.length) || "/";
+  }
+  return p;
+}
+
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  if (typeof input === "string") input = offerosUrl(input);
+  return _nativeFetch(input, init);
+};
+
 function getToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY) || "";
 }
@@ -42,8 +73,8 @@ async function apiAuth(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     clearAuth();
-    const isAdmin = location.pathname.startsWith("/admin");
-    location.href = isAdmin ? "/admin/login" : "/";
+    const isAdmin = offerosPathname().startsWith("/admin");
+    location.href = isAdmin ? offerosUrl("/admin/login") : offerosUrl("/");
     throw new Error(data.detail || "请先登录");
   }
   if (!res.ok) {
@@ -54,7 +85,7 @@ async function apiAuth(path, options = {}) {
 }
 
 async function enterDemo() {
-  const res = await fetch("/api/auth/demo", { method: "POST" });
+  const res = await fetch("/api/auth/demo", { method: "POST", headers: authHeaders() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.detail || "演示入口暂不可用");
@@ -66,7 +97,7 @@ async function enterDemo() {
 async function requireLogin({ admin = false } = {}) {
   if (admin) {
     if (!getToken()) {
-      location.href = "/admin/login";
+      location.href = offerosUrl("/admin/login");
       return null;
     }
   } else {
@@ -81,7 +112,7 @@ async function requireLogin({ admin = false } = {}) {
     }
   }
   if (!getToken()) {
-    location.href = "/admin/login";
+    location.href = offerosUrl("/admin/login");
     return null;
   }
   try {
@@ -89,7 +120,7 @@ async function requireLogin({ admin = false } = {}) {
     setAuth(getToken(), data.user);
     if (admin && data.user.role !== "admin") {
       clearAuth();
-      location.href = "/admin/login?error=" + encodeURIComponent("需要管理员账号");
+      location.href = offerosUrl("/admin/login?error=" + encodeURIComponent("需要管理员账号"));
       return null;
     }
     return {
@@ -106,7 +137,7 @@ async function logout(admin = false) {
     await apiAuth("/api/auth/logout", { method: "POST" });
   } catch (_) {}
   clearAuth();
-  location.href = admin ? "/admin/login" : "/";
+  location.href = admin ? offerosUrl("/admin/login") : offerosUrl("/");
 }
 
 function ensurePasswordModal() {

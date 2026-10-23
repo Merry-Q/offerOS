@@ -9,12 +9,13 @@ from server.auth import (
     create_session,
     delete_session,
     get_current_user,
+    get_user_by_token,
     hash_password,
     verify_password,
 )
 from server.config import settings
 from server.db import get_db, utc_now
-from server.demo import issue_demo_session
+from server.demo import issue_demo_session, demo_presets, SAMPLE_ANSWER, DEMO_USERNAME
 from server.routers.analytics import track_event
 
 router = APIRouter(tags=["auth"])
@@ -28,6 +29,10 @@ class AuthBody(BaseModel):
 class ChangePasswordBody(BaseModel):
     old_password: str = Field(min_length=1, max_length=72)
     new_password: str = Field(min_length=6, max_length=72)
+
+
+class WorkspaceBody(BaseModel):
+    clone_resume_id: str | None = None
 
 
 def _public_user(row) -> dict:
@@ -131,11 +136,44 @@ def admin_bootstrap_status():
 
 
 @router.post("/auth/demo")
-def enter_demo():
+def enter_demo(x_auth_token: str | None = Header(default=None, alias="X-Auth-Token")):
     """Public demo entry: no username/password. Shared fictional account."""
+    existing = get_user_by_token(x_auth_token) if x_auth_token else None
+    if existing and existing["username"].startswith("archive_"):
+        return {"token": x_auth_token, "user": existing, "demo": False,
+                "presets": demo_presets(), "sample_answer": SAMPLE_ANSWER}
     data = issue_demo_session()
     track_event("auth_demo", {"role": "user"}, user_id=data["user"]["id"])
     return data
+
+
+@router.post("/auth/workspace")
+def private_archive_workspace(body: WorkspaceBody | None = None, user: dict = Depends(get_current_user)):
+    """Separate uploaded resumes from the shared fictional demo account."""
+    if user["username"] != DEMO_USERNAME:
+        return {"user": user}
+    uid = "user_" + uuid.uuid4().hex
+    now = utc_now()
+    clone_id = None
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,'user',?)",
+            (uid, "archive_" + uuid.uuid4().hex, hash_password(uuid.uuid4().hex), now),
+        )
+        # Only curated fictional demo resumes can be copied into a visitor workspace.
+        if body and body.clone_resume_id and body.clone_resume_id.startswith("cv_demo_"):
+            row = conn.execute("SELECT * FROM resumes WHERE id=? AND user_id=?", (body.clone_resume_id, user["id"])).fetchone()
+            if row:
+                values = dict(row)
+                clone_id = "cv_demo_" + uuid.uuid4().hex
+                values.update(id=clone_id, user_id=uid, created_at=now, updated_at=now)
+                columns = list(values)
+                conn.execute(f"INSERT INTO resumes ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", [values[c] for c in columns])
+    visitor = {"id": uid, "username": "个人简历档案", "role": "user", "created_at": now}
+    # Return the stored identity, so the next page load recognizes this workspace.
+    with get_db() as conn:
+        visitor["username"] = conn.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()["username"]
+    return {"token": create_session(uid), "user": visitor, "resume_id": clone_id}
 
 
 @router.post("/auth/login")
