@@ -102,6 +102,74 @@
     llm_meta: {},
   };
 
+  const demoMatches = [
+    match,
+    {
+      ...match,
+      match_id: "match_pages_growth",
+      title: "增长产品经理",
+      company: "北屿数据（虚构）",
+      jd_profile: { ...jdProfile, title: "增长产品经理", company: "北屿数据（虚构）", location: "北京", core_requirements: ["获客转化", "A/B 测试", "漏斗指标"] },
+      judge: { ...match.judge, score: 61, level: "冲", one_liner: "能力可迁移，但增长实验证据不足。", dims: [{ name: "知识技能", v: 64, w: 0.35 }, { name: "工作经验", v: 58, w: 0.25 }, { name: "核心能力", v: 66, w: 0.25 }, { name: "个性特质", v: 55, w: 0.15 }] },
+    },
+    {
+      ...match,
+      match_id: "match_pages_success",
+      title: "客户成功产品经理",
+      company: "青禾云服（虚构）",
+      jd_profile: { ...jdProfile, title: "客户成功产品经理", company: "青禾云服（虚构）", location: "杭州", core_requirements: ["客户成功", "服务流程", "留存指标"] },
+      judge: { ...match.judge, score: 78, level: "稳", one_liner: "服务流程经验匹配，补充客户成功指标表述后可以稳投。", dims: [{ name: "知识技能", v: 78, w: 0.35 }, { name: "工作经验", v: 82, w: 0.25 }, { name: "核心能力", v: 80, w: 0.25 }, { name: "个性特质", v: 70, w: 0.15 }] },
+    },
+    {
+      ...match,
+      match_id: "match_pages_intern",
+      title: "产品实习生（校园招聘）",
+      company: "启明学院项目（虚构）",
+      jd_profile: { ...jdProfile, title: "产品实习生（校园招聘）", company: "启明学院项目（虚构）", location: "远程", employment_type: "实习", core_requirements: ["在校生", "基础产品能力"] },
+      judge: { ...match.judge, score: 44, level: "不建议投", one_liner: "年限和职责都高于实习定义，投递会显得方向混乱。", dims: [{ name: "知识技能", v: 60, w: 0.35 }, { name: "工作经验", v: 35, w: 0.25 }, { name: "核心能力", v: 52, w: 0.25 }, { name: "个性特质", v: 28, w: 0.15 }] },
+    },
+  ];
+  const demoIds = ["enterprise", "growth", "success", "intern"];
+  const demoJobs = demoMatches.map((item, index) => ({
+    id: `job_pages_${demoIds[index]}`,
+    title: item.title,
+    company: item.company,
+    location: item.jd_profile.location,
+    employment_type: item.jd_profile.employment_type,
+    matches: [{ id: item.match_id, level: item.judge.level, score: item.judge.score }],
+  }));
+  const demoDiscoveryItems = demoMatches.map((item, index) => ({
+    id: `found_pages_${demoIds[index]}`,
+    title: item.title,
+    company: item.company,
+    city: item.jd_profile.location,
+    recruitment_type: item.jd_profile.employment_type,
+    graduate_cohort: "未注明",
+    category: "产品",
+    open_evidence: "GitHub Pages 内置的虚构历史样例，用于展示已保存结果。",
+    url: `https://example.com/offeros-demo/${demoIds[index]}`,
+    source_host: "example.com",
+    checked_at: "2026-10-23T12:00:00+08:00",
+    gate_warnings: index === 3 ? ["岗位对象与当前经历阶段不匹配"] : [],
+    score: item.judge.score,
+    score_basis: { formula: "已识别技能标签 70 分 + 岗位方向 30 分", skill_points: Math.round(item.judge.score * 0.7), role_points: Math.round(item.judge.score * 0.3) },
+    matched_tags: item.jd_profile.core_requirements.slice(0, 2),
+    missing_tags: index === 1 ? ["增长实验"] : [],
+  }));
+  const demoDiscoveryRun = {
+    id: "search_pages_demo",
+    resume_id: resume.id,
+    status: "done",
+    stage: "done",
+    error: null,
+    created_at: "2026-10-23T12:00:00+08:00",
+    updated_at: "2026-10-23T12:00:00+08:00",
+    filters: {},
+    rejected: [],
+    stats: { checked: 12, duplicates: 2, result_limit: 24, stop_reason: "search_exhausted", previous_jobs: 0, history_excluded: 0 },
+    items: demoDiscoveryItems,
+  };
+
   const nativeFetch = window.fetch.bind(window);
   const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), {
     status, headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -123,8 +191,22 @@
       enabled: false, limit: 24, cities: ["上海", "杭州"], roles: ["ToB SaaS 产品经理"],
       recruitment_types: ["全职"], signals: { roles: ["ToB SaaS"], skills: ["用户研究", "数据分析"], degree: "本科", experience_bucket: "3 年以上" },
     });
-    if (path === "/api/discovery/runs" && method === "GET") return jsonResponse({ items: [] });
-    if (path === "/api/jobs" && method === "GET") return jsonResponse({ items: [] });
+    if (path === "/api/discovery/runs" && method === "GET") return jsonResponse({ items: [{
+      id: demoDiscoveryRun.id, resume_id: resume.id, status: "done", stage: "done", error: null,
+      created_at: demoDiscoveryRun.created_at, updated_at: demoDiscoveryRun.updated_at,
+      item_count: demoDiscoveryItems.length, filters: {}, page: 1,
+    }] });
+    if (path === `/api/discovery/runs/${demoDiscoveryRun.id}` && method === "GET") return jsonResponse(demoDiscoveryRun);
+    if (path.startsWith(`/api/discovery/runs/${demoDiscoveryRun.id}/items/`) && path.endsWith("/analyze") && method === "POST") {
+      const found = demoDiscoveryItems.findIndex(item => path.includes(`/${item.id}/`));
+      const result = demoMatches[Math.max(0, found)];
+      return jsonResponse({ ...result, resume_id: resume.id, source_url: demoDiscoveryItems[Math.max(0, found)].url, jd_text: preset.jd_text, discovery: { quick_score: result.judge.score, checked_at: demoDiscoveryItems[Math.max(0, found)].checked_at, url: demoDiscoveryItems[Math.max(0, found)].url, score_version: "quick-v1" } });
+    }
+    if (path === "/api/jobs" && method === "GET") return jsonResponse({ items: demoJobs });
+    if (path.startsWith("/api/match/runs/") && method === "GET") {
+      const result = demoMatches.find(item => path.endsWith(`/${item.match_id}`));
+      return result ? jsonResponse(result) : jsonResponse({ detail: "历史分析不存在" }, 404);
+    }
     if (path === "/api/match/analyze-jd" && method === "POST") return jsonResponse({ jd_profile: jdProfile });
     if (path === "/api/match/run" && method === "POST") return jsonResponse(match);
     if (path === "/api/match/research" && method === "POST") return jsonResponse({ research });
