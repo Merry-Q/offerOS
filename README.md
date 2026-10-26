@@ -6,11 +6,11 @@
 
 ## 在线访问
 
-目标部署平台为 Railway；上线地址以成功部署后生成的 HTTPS 域名为准。用户端入口 `/`，管理员入口 `/admin/login`。
+已部署至阿里云 ECS：用户端 https://offeros.47.237.109.221.sslip.io/ ，管理端 https://offeros.47.237.109.221.sslip.io/admin/login 。运行、更新与备份见 [阿里云部署说明](deploy/aliyun.md)。该域名由 sslip.io 将服务器 IP 映射成可签发证书的主机名。
 
 `/login` 与 `/register` 会跳转到产品 Demo。
 
-仓库包含 Dockerfile、Railway 健康检查配置和 GitHub Actions 验证流程。持久卷及运行密钥的设置见 [部署说明](deploy/README.md)。Git 和构建上下文均排除实际密钥、简历和数据库。
+仓库包含 Dockerfile、阿里云 Compose 配置、Railway 健康检查配置和 GitHub Actions 验证流程。Railway 备选部署步骤见 [部署说明](deploy/README.md)。Git 和构建上下文均排除实际密钥、简历和数据库。
 
 ## 本地开发
 
